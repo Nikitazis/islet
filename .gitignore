@@ -1,0 +1,15 @@
+node_modules/
+dist/
+out/
+*.log
+
+# Local tooling
+.osp/
+.claude/
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store

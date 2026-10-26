@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru" data-accent="violet">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cstorka</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="stage">
+    <div class="island" id="island" data-state="compact">
+
+      <!-- Collapsed: clock and date, plus a hint of what's playing -->
+      <section class="layer layer-compact" aria-label="Время">
+        <img class="mini-art" id="mini-art" alt="">
+        <span class="clock" id="clock"></span>
+        <span class="date" id="date"></span>
+        <span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+      </section>
+
+      <!-- Short notification: copied text, next track -->
+      <section class="layer layer-peek" aria-live="polite">
+        <div class="peek-icon" id="peek-icon"></div>
+        <div class="peek-text">
+          <strong id="peek-title"></strong>
+          <span id="peek-sub"></span>
+        </div>
+      </section>
+
+      <!-- Expanded panel -->
+      <section class="layer layer-expanded">
+        <header class="bar">
+          <nav class="tabs" role="tablist" aria-label="Разделы">
+            <span class="tabs-indicator" aria-hidden="true"></span>
+          </nav>
+          <div class="bar-end">
+            <span class="bar-clock"><b id="bar-time"></b><span id="bar-date"></span></span>
+            <button class="icon-btn" id="settings-btn" type="button" aria-label="Настройки" aria-pressed="false"></button>
+          </div>
+        </header>
+        <div class="panes">
+          <section class="pane" data-pane="media" role="tabpanel" aria-label="Медиа"></section>
+          <section class="pane" data-pane="clipboard" role="tabpanel" aria-label="Буфер обмена"></section>
+          <section class="pane" data-pane="bookmarks" role="tabpanel" aria-label="Закладки"></section>
+          <section class="pane" data-pane="settings" aria-label="Настройки"></section>
+        </div>
+      </section>
+
+    </div>
+  </main>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

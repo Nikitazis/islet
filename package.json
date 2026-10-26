@@ -1,0 +1,71 @@
+{
+  "name": "cstorka",
+  "productName": "Cstorka",
+  "version": "0.1.0",
+  "description": "Шторка в стиле Dynamic Island для Windows: сейчас играет, история буфера обмена и закладки.",
+  "main": "src/main/main.js",
+  "author": "nikitazis688",
+  "license": "MIT",
+  "private": true,
+  "keywords": [
+    "dynamic-island",
+    "windows",
+    "electron",
+    "media-controls",
+    "clipboard-history"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "preview": "node scripts/preview.js",
+    "icon": "node scripts/make-icon.js",
+    "dist": "electron-builder --win",
+    "dist:dir": "electron-builder --win dir",
+    "screenshots": "electron scripts/screenshots.js"
+  },
+  "build": {
+    "appId": "com.cstorka.app",
+    "productName": "Cstorka",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "!src/renderer/dev/**",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/icon.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "shortcutName": "Cstorka"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    }
+  },
+  "devDependencies": {
+    "electron": "^45.0.0",
+    "electron-builder": "^26.18.0"
+  }
+}
