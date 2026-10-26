@@ -98,6 +98,57 @@ function encodePng(size, rgba) {
   ]);
 }
 
+/** 32-bit BMP as stored inside .ico: bottom-up BGRA plus an empty AND mask (alpha does the masking). */
+function encodeDib(size, rgba) {
+  const header = Buffer.alloc(40);
+  const maskRow = Math.ceil(size / 32) * 4;
+  header.writeUInt32LE(40, 0);
+  header.writeInt32LE(size, 4);
+  header.writeInt32LE(size * 2, 8); // colour + mask
+  header.writeUInt16LE(1, 12);
+  header.writeUInt16LE(32, 14);
+  header.writeUInt32LE(size * size * 4 + maskRow * size, 20);
+  const pixels = Buffer.alloc(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const src = (y * size + x) * 4;
+      const dst = ((size - 1 - y) * size + x) * 4;
+      pixels[dst] = rgba[src + 2];
+      pixels[dst + 1] = rgba[src + 1];
+      pixels[dst + 2] = rgba[src];
+      pixels[dst + 3] = rgba[src + 3];
+    }
+  }
+  return Buffer.concat([header, pixels, Buffer.alloc(maskRow * size)]);
+}
+
+/**
+ * A Windows .ico. Small sizes are BMPs (not every Windows component reads PNG
+ * there), 256 is PNG; small sizes drop the sheet so the pill stays readable.
+ */
+function encodeIco(sizes) {
+  const images = sizes.map((size) => {
+    const rgba = draw(size, { drawer: size >= 48 });
+    return size >= 256 ? encodePng(size, rgba) : encodeDib(size, rgba);
+  });
+  const header = Buffer.alloc(6);
+  header.writeUInt16LE(1, 2); // type: icon
+  header.writeUInt16LE(images.length, 4);
+  let offset = 6 + 16 * images.length;
+  const entries = images.map((png, i) => {
+    const entry = Buffer.alloc(16);
+    entry[0] = sizes[i] >= 256 ? 0 : sizes[i]; // 0 means 256
+    entry[1] = sizes[i] >= 256 ? 0 : sizes[i];
+    entry.writeUInt16LE(1, 4); // color planes
+    entry.writeUInt16LE(32, 6); // bits per pixel
+    entry.writeUInt32LE(png.length, 8);
+    entry.writeUInt32LE(offset, 12);
+    offset += png.length;
+    return entry;
+  });
+  return Buffer.concat([header, ...entries, ...images]);
+}
+
 const outDir = path.join(__dirname, '..', 'assets');
 fs.mkdirSync(outDir, { recursive: true });
 for (const [name, size, options] of [
@@ -107,3 +158,5 @@ for (const [name, size, options] of [
   fs.writeFileSync(path.join(outDir, name), encodePng(size, draw(size, options)));
   console.log('wrote', path.join('assets', name));
 }
+fs.writeFileSync(path.join(outDir, 'icon.ico'), encodeIco([16, 24, 32, 48, 64, 128, 256]));
+console.log('wrote', path.join('assets', 'icon.ico'));
