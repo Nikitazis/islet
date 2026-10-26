@@ -731,6 +731,32 @@ svg { display: block; width: 100%; height: 100%; }
 .clip.is-copied .clip-done { opacity: 1; }
 .clip.is-copied .clip-actions { opacity: 0; }
 
+/* Quick paste: the entry Enter would paste is tinted and labelled. */
+.clip-enter {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  translate: 0 -50%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-2);
+  font-size: 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
+}
+.clip-list.is-quick .clip { padding-right: 112px; }
+.clip-list.is-quick .clip-actions { display: none; }
+.clip-list.is-quick .clip.is-target,
+.clip-list.is-quick .clip:hover,
+.clip-list.is-quick .clip:focus { background: rgb(var(--accent-rgb) / 0.14); }
+.clip-list.is-quick .clip.is-target .clip-enter,
+.clip-list.is-quick .clip:hover .clip-enter,
+.clip-list.is-quick .clip:focus .clip-enter { opacity: 1; }
+.clip-list.is-quick:has(.clip:focus, .clip:hover) .clip.is-target:not(:focus, :hover) { background: none; }
+.clip-list.is-quick:has(.clip:focus, .clip:hover) .clip.is-target:not(:focus, :hover) .clip-enter { opacity: 0; }
+
 .clip-section {
   padding: 8px 8px 4px;
   color: var(--text-3);
@@ -882,8 +908,11 @@ svg { display: block; width: 100%; height: 100%; }
   align-content: start;
 }
 
+.row.is-wide { grid-column: 1 / -1; }
+.row-label span.is-warning { color: var(--danger); }
+
 .row {
-  min-height: 54px;
+  min-height: 52px;
   display: flex;
   align-items: center;
   justify-content: space-between;

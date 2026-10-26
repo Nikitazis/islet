@@ -14,8 +14,12 @@ contextBridge.exposeInMainWorld('cstorka', {
   island: {
     setInteractive: (interactive) => ipcRenderer.send('island:interactive', Boolean(interactive)),
     setFocus: (focus) => ipcRenderer.send('island:focus', Boolean(focus)),
+    reportState: (state) => ipcRenderer.send('island:state', String(state)),
     onToggle: (callback) => on('island:toggle', callback),
+    onCollapse: (callback) => on('island:collapse', callback),
+    onQuickPaste: (callback) => on('island:quick-paste', callback),
     onBlur: (callback) => on('island:blur', callback),
+    onShortcuts: (callback) => on('shortcuts:status', callback),
   },
 
   media: {
@@ -27,6 +31,8 @@ contextBridge.exposeInMainWorld('cstorka', {
 
   clipboard: {
     copy: (id) => ipcRenderer.invoke('clip:copy', id),
+    paste: (id) => ipcRenderer.invoke('clip:paste', id),
+    cancelPaste: () => ipcRenderer.send('clip:paste-cancel'),
     togglePin: (id) => ipcRenderer.send('clip:pin', id),
     remove: (id) => ipcRenderer.send('clip:remove', id),
     clear: () => ipcRenderer.send('clip:clear'),

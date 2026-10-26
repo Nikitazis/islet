@@ -1,7 +1,7 @@
 {
   "name": "cstorka",
   "productName": "Cstorka",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Шторка в стиле Dynamic Island для Windows: сейчас играет, история буфера обмена и закладки.",
   "main": "src/main/main.js",
   "author": "nikitazis688",
@@ -67,5 +67,8 @@
   "devDependencies": {
     "electron": "^45.0.0",
     "electron-builder": "^26.18.0"
+  },
+  "dependencies": {
+    "koffi": "^3.3.4"
   }
 }

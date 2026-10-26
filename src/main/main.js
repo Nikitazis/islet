@@ -6,30 +6,46 @@ const { Store } = require('./store');
 const { MediaBridge } = require('./media');
 const { ClipboardHistory } = require('./clipboard');
 const { Bookmarks } = require('./bookmarks');
+const win32 = require('./win32');
 
 const IS_DEV = process.argv.includes('--dev');
-const SHORTCUT = 'Control+Alt+Space';
+// The first free one wins: Ctrl+Alt+Space is often taken (e.g. by the Claude app).
+const OPEN_SHORTCUTS = ['Control+Alt+Space', 'Alt+Shift+Space', 'Control+Alt+C'];
+const PASTE_SHORTCUT = 'Control+Shift+V';
+const FULLSCREEN_POLL_MS = 700;
 // The window is a fixed transparent canvas; the island inside it changes shape.
 // It is click-through everywhere except the island itself.
 const WINDOW_SIZE = { width: 760, height: 420 };
 
+const OPEN_MODES = [
+  { id: 'hover', label: 'При наведении' },
+  { id: 'dwell', label: 'Если задержать мышь' },
+  { id: 'edge', label: 'У верхнего края экрана' },
+  { id: 'click', label: 'Только по щелчку' },
+];
+
 const DEFAULT_SETTINGS = {
   accent: 'violet',
-  hoverExpand: true,
+  openOn: 'dwell',
   notifications: true,
+  hideInFullscreen: true,
+  quickPaste: true,
   launchAtLogin: false,
   clipboardLimit: 60,
 };
 
 const SETTINGS_RULES = {
   accent: (v) => ['violet', 'orange'].includes(v),
-  hoverExpand: (v) => typeof v === 'boolean',
+  openOn: (v) => OPEN_MODES.some((m) => m.id === v),
   notifications: (v) => typeof v === 'boolean',
+  hideInFullscreen: (v) => typeof v === 'boolean',
+  quickPaste: (v) => typeof v === 'boolean',
   launchAtLogin: (v) => typeof v === 'boolean',
   clipboardLimit: (v) => [30, 60, 100].includes(v),
 };
 
 let win = null;
+let winHandle = 0;
 let tray = null;
 let store;
 let media;
@@ -37,9 +53,15 @@ let clips;
 let bookmarks;
 let quitting = false;
 
+let shownOverFullscreen = false; // opened by a shortcut while a fullscreen app is in front
+let pasteTarget = 0;             // window that had focus when quick paste was called
+let shortcuts = { open: null, paste: false }; // registered open accelerator, paste registered?
+
 const send = (channel, payload) => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
 };
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** What the renderer needs from a clipboard entry; long texts are cut for transport. */
 const clipView = (item) => ({
@@ -54,6 +76,8 @@ const clipView = (item) => ({
   createdAt: item.createdAt,
   pinned: item.pinned,
 });
+
+// ───────────── Window ─────────────
 
 function islandBounds() {
   const { bounds } = screen.getPrimaryDisplay();
@@ -79,7 +103,6 @@ function createWindow() {
     fullscreenable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
-    focusable: false,
     show: false,
     title: 'Cstorka',
     webPreferences: {
@@ -91,6 +114,9 @@ function createWindow() {
       backgroundThrottling: false,
     },
   });
+  winHandle = win32.handleOf(win);
+  // Clicks on the island must not steal focus from the app you work in.
+  win32.setNoActivate(winHandle, true);
 
   win.setAlwaysOnTop(true, 'screen-saver');
   win.setIgnoreMouseEvents(true, { forward: true });
@@ -113,6 +139,76 @@ function repositionWindow() {
   if (win && !win.isDestroyed()) win.setBounds(islandBounds());
 }
 
+function takeFocus() {
+  win32.setNoActivate(winHandle, false);
+  win.focus();
+}
+
+function releaseFocus() {
+  // blur() activates "the next window", so only call it while we really are in front.
+  // isFocused() lags behind right after quick paste has handed focus back.
+  if (win32.foregroundWindow() === winHandle) win.blur();
+  win32.setNoActivate(winHandle, true);
+}
+
+/** Shows the island (even over a fullscreen app) and gives it keyboard focus. */
+function bringIslandForward() {
+  if (!win.isVisible()) {
+    shownOverFullscreen = true;
+    win.showInactive();
+  }
+  // A global shortcut lets us take the foreground; do it now, before that right expires.
+  takeFocus();
+}
+
+/** Hides the island while a fullscreen game, video or presentation is in front. */
+function syncFullscreen() {
+  if (!win || win.isDestroyed()) return;
+  let hide = false;
+  if (store.get('settings').hideInFullscreen && !shownOverFullscreen) {
+    try {
+      hide = win32.isForegroundFullscreen(winHandle);
+    } catch (err) {
+      console.warn('[fullscreen]', err.message);
+    }
+  }
+  if (hide && win.isVisible()) {
+    send('island:collapse');
+    win.hide();
+  } else if (!hide && !win.isVisible()) {
+    win.showInactive();
+  }
+}
+
+// ───────────── Shortcuts ─────────────
+
+function openFromShortcut() {
+  bringIslandForward();
+  send('island:toggle');
+}
+
+function startQuickPaste() {
+  // Pressed again while the island has focus: keep the window we came from.
+  const front = win32.foregroundWindow();
+  if (front && front !== winHandle) pasteTarget = front;
+  bringIslandForward();
+  send('island:quick-paste');
+}
+
+function registerShortcuts() {
+  globalShortcut.unregisterAll();
+  const open = OPEN_SHORTCUTS.find((accelerator) => globalShortcut.register(accelerator, openFromShortcut)) ?? null;
+  const wantsPaste = store.get('settings').quickPaste;
+  const paste = wantsPaste && globalShortcut.register(PASTE_SHORTCUT, startQuickPaste);
+  if (!open) console.warn(`[app] all open shortcuts are taken: ${OPEN_SHORTCUTS.join(', ')}`);
+  if (wantsPaste && !paste) console.warn(`[app] ${PASTE_SHORTCUT} is taken by another program`);
+  shortcuts = { open, paste };
+  send('shortcuts:status', shortcuts);
+  buildTrayMenu();
+}
+
+// ───────────── Settings ─────────────
+
 function setLaunchAtLogin(enabled) {
   const options = { openAtLogin: enabled };
   if (!app.isPackaged) {
@@ -121,6 +217,15 @@ function setLaunchAtLogin(enabled) {
     options.args = [path.resolve(app.getAppPath())];
   }
   app.setLoginItemSettings(options);
+}
+
+/** Settings saved by 0.1.0 had a single hover switch. */
+function migrateSettings() {
+  const settings = { ...store.get('settings') };
+  if (!('hoverExpand' in settings)) return;
+  if (settings.hoverExpand === false) settings.openOn = 'click';
+  delete settings.hoverExpand;
+  store.set('settings', settings);
 }
 
 function updateSettings(patch) {
@@ -132,10 +237,14 @@ function updateSettings(patch) {
   store.set('settings', next);
   if (next.launchAtLogin !== current.launchAtLogin) setLaunchAtLogin(next.launchAtLogin);
   if (next.clipboardLimit !== current.clipboardLimit) clips.applyLimit();
+  if (next.quickPaste !== current.quickPaste) registerShortcuts();
+  if (next.hideInFullscreen !== current.hideInFullscreen) syncFullscreen();
   send('settings:changed', next);
   buildTrayMenu();
   return next;
 }
+
+// ───────────── Tray ─────────────
 
 function trayImage() {
   const image = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'assets', 'tray.png'));
@@ -146,13 +255,28 @@ function buildTrayMenu() {
   if (!tray) return;
   const settings = store.get('settings');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Открыть шторку', accelerator: SHORTCUT, click: () => send('island:toggle', { pin: true }) },
+    { label: 'Открыть шторку', accelerator: shortcuts.open ?? undefined, click: openFromShortcut },
     { type: 'separator' },
     {
-      label: 'Раскрывать при наведении',
+      label: 'Как открывать',
+      submenu: OPEN_MODES.map((mode) => ({
+        label: mode.label,
+        type: 'radio',
+        checked: settings.openOn === mode.id,
+        click: () => updateSettings({ openOn: mode.id }),
+      })),
+    },
+    {
+      label: 'Прятать в полноэкранном режиме',
       type: 'checkbox',
-      checked: settings.hoverExpand,
-      click: (item) => updateSettings({ hoverExpand: item.checked }),
+      checked: settings.hideInFullscreen,
+      click: (item) => updateSettings({ hideInFullscreen: item.checked }),
+    },
+    {
+      label: 'Быстрая вставка (Ctrl+Shift+V)',
+      type: 'checkbox',
+      checked: settings.quickPaste,
+      click: (item) => updateSettings({ quickPaste: item.checked }),
     },
     {
       label: 'Запускать вместе с Windows',
@@ -168,9 +292,11 @@ function buildTrayMenu() {
 function createTray() {
   tray = new Tray(trayImage());
   tray.setToolTip('Cstorka');
-  tray.on('click', () => send('island:toggle', { pin: true }));
+  tray.on('click', openFromShortcut);
   buildTrayMenu();
 }
+
+// ───────────── IPC ─────────────
 
 function registerIpc() {
   ipcMain.handle('app:init', () => ({
@@ -178,7 +304,7 @@ function registerIpc() {
     clipboard: clips.items.map(clipView),
     bookmarks: bookmarks.items,
     media: media.state,
-    shortcut: SHORTCUT,
+    shortcuts: { paste: PASTE_SHORTCUT, status: shortcuts },
     version: app.getVersion(),
   }));
 
@@ -189,12 +315,15 @@ function registerIpc() {
   });
   ipcMain.on('island:focus', (_e, focus) => {
     if (!win) return;
-    if (focus) {
-      win.setFocusable(true);
-      win.focus();
-    } else {
-      win.blur();
-      win.setFocusable(false);
+    if (focus) takeFocus();
+    else releaseFocus();
+  });
+  ipcMain.on('island:state', (_e, state) => {
+    if (state !== 'compact') return;
+    pasteTarget = 0;
+    if (shownOverFullscreen) {
+      shownOverFullscreen = false;
+      syncFullscreen();
     }
   });
 
@@ -207,6 +336,22 @@ function registerIpc() {
   ipcMain.on('clip:pin', (_e, id) => clips.togglePin(String(id)));
   ipcMain.on('clip:remove', (_e, id) => clips.remove(String(id)));
   ipcMain.on('clip:clear', () => clips.clearUnpinned());
+  ipcMain.handle('clip:paste', async (_e, id) => {
+    if (!(await clips.copy(String(id)))) return { ok: false };
+    const target = pasteTarget;
+    pasteTarget = 0;
+    if (!target || !win32.focusWindow(target)) return { ok: true, pasted: false };
+    // Let the target window settle, and never type into anything else.
+    await wait(60);
+    if (win32.foregroundWindow() !== target) return { ok: true, pasted: false };
+    win32.sendPaste();
+    return { ok: true, pasted: true };
+  });
+  ipcMain.on('clip:paste-cancel', () => {
+    const target = pasteTarget;
+    pasteTarget = 0;
+    if (target) win32.focusWindow(target);
+  });
 
   // Bookmarks
   ipcMain.handle('bm:add', (_e, payload) => bookmarks.add(payload ?? {}));
@@ -226,6 +371,8 @@ function registerIpc() {
   ipcMain.handle('settings:set', (_e, patch) => updateSettings(patch));
 }
 
+// ───────────── App ─────────────
+
 function bootstrap() {
   app.setAppUserModelId('com.cstorka.app');
 
@@ -236,6 +383,7 @@ function bootstrap() {
       clipboard: [],
       bookmarks: [],
     });
+    migrateSettings();
 
     media = new MediaBridge(path.join(__dirname, 'media-bridge.ps1'));
     clips = new ClipboardHistory(store, path.join(dataDir, 'clipboard-images'));
@@ -250,20 +398,18 @@ function bootstrap() {
     registerIpc();
     createWindow();
     createTray();
+    registerShortcuts();
 
     media.start();
     clips.start().catch((err) => console.warn('[clipboard] could not start:', err.message));
-
-    if (!globalShortcut.register(SHORTCUT, () => send('island:toggle', { pin: true }))) {
-      console.warn(`[app] shortcut ${SHORTCUT} is taken by another program`);
-    }
+    setInterval(syncFullscreen, FULLSCREEN_POLL_MS);
 
     screen.on('display-metrics-changed', repositionWindow);
     screen.on('display-added', repositionWindow);
     screen.on('display-removed', repositionWindow);
   });
 
-  app.on('second-instance', () => send('island:toggle', { pin: true }));
+  app.on('second-instance', openFromShortcut);
 
   app.on('before-quit', () => {
     quitting = true;

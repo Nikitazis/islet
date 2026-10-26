@@ -12,6 +12,7 @@ const PAGE = path.join(__dirname, '..', 'src', 'renderer', 'index.html');
 const SHOTS = [
   { name: 'media', query: { state: 'expanded' }, height: 400 },
   { name: 'clipboard', query: { state: 'expanded', tab: 'clipboard' }, height: 400 },
+  { name: 'quick-paste', query: { state: 'paste' }, height: 400 },
   { name: 'bookmarks', query: { state: 'expanded', tab: 'bookmarks' }, height: 400 },
   { name: 'media-orange', query: { state: 'expanded', accent: 'orange' }, height: 400 },
   { name: 'settings', query: { settings: '1' }, height: 400 },

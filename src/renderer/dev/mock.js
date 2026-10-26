@@ -115,7 +115,10 @@ const state = {
     { id: id(), type: 'folder', target: 'C:\\Users\\me\\Downloads', title: 'Загрузки', icon: null },
     { id: id(), type: 'file', target: 'C:\\Users\\me\\Documents\\План.docx', title: 'План.docx', icon: null },
   ],
-  settings: { accent: 'violet', hoverExpand: true, notifications: true, launchAtLogin: false, clipboardLimit: 60 },
+  settings: {
+    accent: 'violet', openOn: 'dwell', notifications: true, hideInFullscreen: true,
+    quickPaste: true, launchAtLogin: false, clipboardLimit: 60,
+  },
 };
 
 const pushMedia = () => emit('media', clone(state.media));
@@ -131,13 +134,21 @@ function addClip(text) {
 
 window.cstorka = {
   demo: true,
-  init: async () => ({ ...clone(state), shortcut: 'Control+Alt+Space', version: '0.1.0' }),
+  init: async () => ({
+    ...clone(state),
+    shortcuts: { paste: 'Control+Shift+V', status: { open: 'Control+Alt+Space', paste: true } },
+    version: '0.2.0',
+  }),
 
   island: {
     setInteractive() {},
     setFocus() {},
+    reportState() {},
     onToggle: (cb) => on('toggle', cb),
+    onCollapse: (cb) => on('collapse', cb),
+    onQuickPaste: (cb) => on('quick-paste', cb),
     onBlur: (cb) => on('blur', cb),
+    onShortcuts: (cb) => on('shortcuts', cb),
   },
 
   media: {
@@ -167,6 +178,12 @@ window.cstorka = {
       setTimeout(pushClips, 900);
       return true;
     },
+    async paste(clipId) {
+      const ok = await window.cstorka.clipboard.copy(clipId);
+      console.log('[demo] paste', clipId);
+      return { ok, pasted: ok };
+    },
+    cancelPaste() {},
     togglePin(clipId) {
       const item = state.clipboard.find((c) => c.id === clipId);
       if (item) item.pinned = !item.pinned;
@@ -220,6 +237,7 @@ window.cstorka = {
   },
 
   demoPeek: () => addClip('Встреча в 18:00 у главного входа'),
+  demoQuickPaste: () => emit('quick-paste'),
 };
 
 // Handy in the console: cstorkaDemo.copy('текст'), cstorkaDemo.next()
@@ -227,4 +245,5 @@ window.cstorkaDemo = {
   copy: addClip,
   next: () => window.cstorka.media.command({ cmd: 'next', app: 'Spotify.exe' }),
   toggle: () => emit('toggle', {}),
+  quickPaste: () => emit('quick-paste'),
 };

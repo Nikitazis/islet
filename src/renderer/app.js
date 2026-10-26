@@ -23,7 +23,11 @@ const TABS = [
   { id: 'bookmarks', label: 'Закладки', icon: 'bookmark' },
 ];
 const PANES = ['media', 'clipboard', 'bookmarks', 'settings'];
-const HOVER_DELAY = 140;
+// How long the pointer has to rest on the pill before it opens, per "open on" mode.
+const HOVER_DELAY = { hover: 120, dwell: 450 };
+// "Edge" mode: the pointer pushed against the top screen edge above the pill.
+const EDGE_ROWS = 2;
+const EDGE_DWELL = 110;
 const LEAVE_DELAY = 380;
 const PEEK_TIME = 2800;
 
@@ -47,6 +51,7 @@ const ui = {
 let settings = {};
 let hoverTimer = null;
 let leaveTimer = null;
+let edgeTimer = null;
 const views = {};
 
 // ───────────── Motion ─────────────
@@ -85,6 +90,7 @@ function setState(next) {
     island.style.setProperty('--dur', growing ? 'var(--open-dur)' : 'var(--close-dur)');
     ui.state = next;
     island.dataset.state = next;
+    api.island.reportState(next);
   }
   if (next !== 'expanded') {
     if (ui.pinned) api.island.setFocus(false);
@@ -105,6 +111,8 @@ function expand({ pin = false } = {}) {
 function collapse() {
   clearTimeout(hoverTimer);
   clearTimeout(leaveTimer);
+  clearTimeout(edgeTimer);
+  edgeTimer = null;
   setState('compact');
 }
 
@@ -117,12 +125,34 @@ function pinOpen() {
 
 // ───────────── Pointer ─────────────
 
-island.addEventListener('pointerenter', () => {
+island.addEventListener('pointerenter', (event) => {
   ui.hovering = true;
   api.island.setInteractive(true);
   clearTimeout(leaveTimer);
-  if (ui.state !== 'expanded' && settings.hoverExpand) {
-    hoverTimer = setTimeout(() => expand(), HOVER_DELAY);
+  const delay = HOVER_DELAY[settings.openOn];
+  // A held button means a tab or a selection is being dragged past: don't pop open.
+  if (ui.state !== 'expanded' && delay !== undefined && event.buttons === 0) {
+    hoverTimer = setTimeout(() => expand(), delay);
+  }
+});
+
+// "Edge" mode watches the very top rows of the screen. The window forwards
+// pointer moves even where it is click-through, so this sees them.
+document.addEventListener('mousemove', (event) => {
+  if (settings.openOn !== 'edge' || ui.state === 'expanded') return;
+  const pill = island.getBoundingClientRect();
+  const atEdge = event.clientY < EDGE_ROWS && event.buttons === 0
+    && event.clientX >= pill.left - 8 && event.clientX <= pill.right + 8;
+  if (!atEdge) {
+    clearTimeout(edgeTimer);
+    edgeTimer = null;
+  } else if (!edgeTimer) {
+    edgeTimer = setTimeout(() => {
+      edgeTimer = null;
+      expand();
+      // The pointer is above the island, not on it: close unless it comes down.
+      leaveTimer = setTimeout(() => { if (!ui.hovering && !ui.pinned) collapse(); }, 1200);
+    }, EDGE_DWELL);
   }
 });
 
@@ -272,9 +302,15 @@ function tick() {
 
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape') {
-    if (views.bookmarks.isEditing()) views.bookmarks.cancelEdit();
-    else if (ui.settingsOpen) selectTab(ui.tab);
-    else collapse();
+    if (views.bookmarks.isEditing()) {
+      views.bookmarks.cancelEdit();
+    } else if (ui.settingsOpen) {
+      selectTab(ui.tab);
+    } else {
+      // Quick paste was called from another window: hand the focus back to it.
+      if (views.clipboard.isQuickPaste()) api.clipboard.cancelPaste();
+      collapse();
+    }
     return;
   }
   if (ui.state !== 'expanded' || event.target.closest('input')) return;
@@ -319,10 +355,10 @@ views.media = createMediaView(pane('media'), api, {
     peek({ art, icon: 'music', title: session.title, sub: session.artist || session.appName });
   },
 });
-views.clipboard = createClipboardView(pane('clipboard'), api, { pin: pinOpen });
+views.clipboard = createClipboardView(pane('clipboard'), api, { pin: pinOpen, collapse, notify: peek });
 views.bookmarks = createBookmarksView(pane('bookmarks'), api, { pin: pinOpen, collapse });
 views.settings = createSettingsView(pane('settings'), api, {
-  shortcut: data.shortcut,
+  shortcuts: data.shortcuts,
   version: data.version,
   onChange: applySettings,
 });
@@ -342,6 +378,16 @@ api.island.onToggle(() => {
   if (ui.state === 'expanded') collapse();
   else expand({ pin: true });
 });
+
+// Ctrl+Shift+V: history with the search focused; Enter pastes into the window you came from.
+api.island.onQuickPaste(() => {
+  expand({ pin: true });
+  selectTab('clipboard');
+  views.clipboard.startQuickPaste();
+});
+
+// The main process hides the island under fullscreen apps.
+api.island.onCollapse(collapse);
 
 // A click anywhere outside the island takes focus away: close, or at least stop holding focus.
 api.island.onBlur(() => {
@@ -365,5 +411,6 @@ if (api.demo) {
   if (params.get('state') === 'expanded') expand();
   if (params.get('settings')) { expand(); ui.settingsOpen = true; renderTabs(); }
   if (params.get('state') === 'peek') api.demoPeek?.();
+  if (params.get('state') === 'paste') api.demoQuickPaste?.();
   window.cstorkaUi = { expand, collapse, peek, selectTab };
 }

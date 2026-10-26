@@ -4,11 +4,20 @@ const ACCENTS = [
   { id: 'violet', label: 'Фиолетовый', color: '#bf5af2' },
   { id: 'orange', label: 'Оранжевый', color: '#ff9f0a' },
 ];
+const OPEN_MODES = [
+  { id: 'hover', label: 'Сразу', hint: 'Раскрывается, как только мышь окажется на шторке' },
+  { id: 'dwell', label: 'С задержкой', hint: 'Мышь нужно задержать на шторке полсекунды' },
+  { id: 'edge', label: 'Край экрана', hint: 'Уприте мышь в самый верх экрана над шторкой' },
+  { id: 'click', label: 'Щелчок', hint: 'Только щелчком по шторке или с клавиатуры' },
+];
 const LIMITS = [30, 60, 100];
 
-export function createSettingsView(root, api, { shortcut, version, onChange }) {
+const prettyShortcut = (accelerator) => accelerator.replace('Control', 'Ctrl').replaceAll('+', ' + ');
+
+export function createSettingsView(root, api, { shortcuts, version, onChange }) {
   let settings = {};
-  // Controls are built once and only their state attributes change, so switches can animate.
+  let shortcutStatus = shortcuts.status;
+  // Controls are built once and only their state changes, so switches can animate.
   const bindings = [];
 
   const save = async (patch) => {
@@ -17,8 +26,12 @@ export function createSettingsView(root, api, { shortcut, version, onChange }) {
     sync();
   };
 
-  const row = (title, hint, control) =>
-    h('div', { class: 'row' }, h('div', { class: 'row-label' }, h('strong', {}, title), hint && h('span', {}, hint)), control);
+  const row = (title, hint, control, wide = false) =>
+    h('div', { class: `row${wide ? ' is-wide' : ''}` },
+      h('div', { class: 'row-label' }, h('strong', {}, title), hint),
+      control);
+
+  const hintEl = (text) => h('span', {}, text);
 
   const toggle = (key, label) => {
     const el = h('button', {
@@ -44,17 +57,39 @@ export function createSettingsView(root, api, { shortcut, version, onChange }) {
     return el;
   });
 
+  const openHint = hintEl('');
+  bindings.push(() => {
+    openHint.textContent = OPEN_MODES.find((m) => m.id === settings.openOn)?.hint ?? '';
+  });
+
+  const pasteHint = hintEl('');
+  bindings.push(() => {
+    const taken = settings.quickPaste && !shortcutStatus.paste;
+    pasteHint.textContent = taken ? 'Сочетание занято другой программой' : prettyShortcut(shortcuts.paste);
+    pasteHint.classList.toggle('is-warning', taken);
+  });
+
+  const openKeys = h('span', {});
+  bindings.push(() => {
+    openKeys.replaceChildren(...(shortcutStatus.open
+      ? ['Открыть с клавиатуры: ', h('kbd', {}, prettyShortcut(shortcutStatus.open))]
+      : ['Сочетания для открытия заняты другими программами']));
+  });
+
   root.append(h('div', { class: 'settings' },
+    row('Как раскрывать', openHint,
+      h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Как раскрывать шторку' },
+        OPEN_MODES.map((m) => radio('openOn', m.id, {}, m.label))),
+      true),
     row('Акцентный цвет', null, h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Акцентный цвет' }, swatches)),
-    row('Раскрывать при наведении', 'Иначе — по щелчку', toggle('hoverExpand', 'Раскрывать при наведении')),
-    row('Уведомления', 'Скопированное и новый трек', toggle('notifications', 'Уведомления')),
-    row('Запуск с Windows', 'Шторка появится после входа', toggle('launchAtLogin', 'Запуск с Windows')),
-    row('История буфера', 'Закреплённые не считаются',
+    row('Уведомления', hintEl('Скопированное и новый трек'), toggle('notifications', 'Уведомления')),
+    row('Прятать в полноэкранном', hintEl('Игры, видео, презентации'), toggle('hideInFullscreen', 'Прятать в полноэкранном режиме')),
+    row('Запуск с Windows', hintEl('Шторка появится после входа'), toggle('launchAtLogin', 'Запуск с Windows')),
+    row('История буфера', hintEl('Закреплённые не считаются'),
       h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Сколько записей хранить' },
         LIMITS.map((n) => radio('clipboardLimit', n, {}, String(n))))),
-    h('div', { class: 'settings-foot' },
-      h('span', {}, 'Открыть с клавиатуры: ', h('kbd', {}, shortcut.replace('Control', 'Ctrl').replaceAll('+', ' + '))),
-      h('span', {}, `Cstorka ${version}`)),
+    row('Быстрая вставка', pasteHint, toggle('quickPaste', 'Быстрая вставка')),
+    h('div', { class: 'settings-foot' }, openKeys, h('span', {}, `Cstorka ${version}`)),
   ));
 
   function sync() {
@@ -64,6 +99,10 @@ export function createSettingsView(root, api, { shortcut, version, onChange }) {
   api.settings.onChange((next) => {
     settings = next;
     onChange(settings);
+    sync();
+  });
+  api.island.onShortcuts((status) => {
+    shortcutStatus = status;
     sync();
   });
 
