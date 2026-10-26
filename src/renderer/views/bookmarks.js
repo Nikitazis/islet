@@ -1,11 +1,7 @@
 import { h, iconEl } from '../lib/dom.js';
+import { t } from '../lib/i18n.js';
 
 const DRAG_TYPE = 'application/x-cstorka-bookmark';
-
-const ERRORS = {
-  invalid: 'Введите адрес сайта (например, github.com) или путь к существующему файлу.',
-  duplicate: 'Такая закладка уже есть.',
-};
 
 export function createBookmarksView(root, api, hooks) {
   let items = [];
@@ -14,23 +10,24 @@ export function createBookmarksView(root, api, hooks) {
 
   // ── DOM ──
   const grid = h('div', { class: 'bm-grid scroll' });
-  const targetInput = h('input', { class: 'input', placeholder: 'github.com или C:\\Users\\…\\Документы', spellcheck: false });
-  const titleInput = h('input', { class: 'input', placeholder: 'Подставится автоматически', spellcheck: false });
+  const targetInput = h('input', { class: 'input', placeholder: t('bm.targetPlaceholder'), spellcheck: false });
+  const titleInput = h('input', { class: 'input', placeholder: t('bm.titlePlaceholder'), spellcheck: false });
   const error = h('div', { class: 'form-error', role: 'alert' });
-  const submitBtn = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Добавить');
+  const submitBtn = h('button', { class: 'btn btn-primary', type: 'submit' }, t('bm.add'));
   const form = h('form', { class: 'bm-form', onSubmit: submit },
-    h('h2', {}, 'Новая закладка'),
-    h('label', { class: 'field' }, h('span', {}, 'Адрес сайта, файл или папка'), targetInput),
-    h('label', { class: 'field' }, h('span', {}, 'Название'), titleInput),
+    h('h2', {}, t('bm.newTitle')),
+    h('label', { class: 'field' }, h('span', {}, t('bm.target')), targetInput),
+    h('label', { class: 'field' }, h('span', {}, t('bm.title')), titleInput),
     error,
     h('div', { class: 'form-row' },
-      h('button', { class: 'btn btn-plain', type: 'button', onClick: () => pick('file') }, 'Файл…'),
-      h('button', { class: 'btn btn-plain', type: 'button', onClick: () => pick('folder') }, 'Папка…'),
+      h('button', { class: 'btn btn-plain', type: 'button', onClick: () => pick('file') }, t('bm.file')),
+      h('button', { class: 'btn btn-plain', type: 'button', onClick: () => pick('folder') }, t('bm.folder')),
       h('span', { class: 'spacer' }),
-      h('button', { class: 'btn btn-ghost', type: 'button', onClick: () => setMode('grid') }, 'Отмена'),
+      h('button', { class: 'btn btn-ghost', type: 'button', onClick: () => setMode('grid') }, t('bm.cancel')),
       submitBtn,
     ),
   );
+  root.dataset.drop = t('bm.drop');
   root.append(grid, form);
 
   // ── Form ──
@@ -52,7 +49,7 @@ export function createBookmarksView(root, api, hooks) {
     const result = await api.bookmarks.add({ target: targetInput.value, title: titleInput.value });
     submitBtn.disabled = false;
     if (result.ok) setMode('grid');
-    else error.textContent = ERRORS[result.error] ?? ERRORS.invalid;
+    else error.textContent = t(result.error === 'duplicate' ? 'bm.error.duplicate' : 'bm.error.invalid');
   }
 
   async function pick(kind) {
@@ -124,7 +121,7 @@ export function createBookmarksView(root, api, hooks) {
     h('button', {
       class: 'bm-remove',
       type: 'button',
-      'aria-label': `Удалить «${b.title}»`,
+      'aria-label': t('bm.remove', { title: b.title }),
       onClick: () => api.bookmarks.remove(b.id),
     }, iconEl('close')));
     return el;
@@ -134,7 +131,7 @@ export function createBookmarksView(root, api, hooks) {
     return h('div', { class: 'bm bm-add' },
       h('button', { class: 'bm-open', type: 'button', onClick: () => setMode('form') },
         h('div', { class: 'bm-icon' }, iconEl('plus')),
-        h('span', { class: 'bm-label' }, 'Добавить')));
+        h('span', { class: 'bm-label' }, t('bm.add'))));
   }
 
   function render() {

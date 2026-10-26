@@ -3,15 +3,19 @@
 const { app, BrowserWindow, Menu, Tray, dialog, globalShortcut, ipcMain, nativeImage, screen } = require('electron');
 const path = require('node:path');
 const { Store } = require('./store');
-const { MediaBridge } = require('./media');
+const { WinBridge } = require('./bridge');
 const { ClipboardHistory } = require('./clipboard');
 const { Bookmarks } = require('./bookmarks');
+const { Calendar } = require('./calendar');
+const { SystemMonitor } = require('./system');
+const { Updater } = require('./updater');
+const i18n = require('./i18n');
 const win32 = require('./win32');
 
+const { t } = i18n;
 const IS_DEV = process.argv.includes('--dev');
-// The first free one wins: Ctrl+Alt+Space is often taken (e.g. by the Claude app).
+// With no shortcut chosen, the first free one wins: Ctrl+Alt+Space is often taken (e.g. by the Claude app).
 const OPEN_SHORTCUTS = ['Control+Alt+Space', 'Alt+Shift+Space', 'Control+Alt+C'];
-const PASTE_SHORTCUT = 'Control+Shift+V';
 const WATCH_MS = 500;
 // The window is a fixed transparent canvas; the island inside it changes shape.
 // It is click-through everywhere except the island itself.
@@ -19,48 +23,62 @@ const WINDOW_SIZE = { width: 760, height: 460 };
 // A point under the collapsed pill (DIP from the screen's top centre), where a browser's tabs would be.
 const PILL_PROBE_Y = 26;
 
-const OPEN_MODES = [
-  { id: 'hover', label: 'При наведении' },
-  { id: 'dwell', label: 'Если задержать мышь' },
-  { id: 'edge', label: 'У верхнего края экрана' },
-  { id: 'click', label: 'Только по щелчку' },
-];
+const OPEN_MODES = ['hover', 'dwell', 'edge', 'click'];
+const ACCELERATOR = /^(?:(?:Control|Alt|Shift|Super)\+){0,3}(?:[A-Z0-9]|F(?:[1-9]|1\d|2[0-4])|Space|Tab|Backspace|Delete|Insert|Home|End|PageUp|PageDown|Up|Down|Left|Right|Plus|[`\-=[\]\\;',./])$/;
 
 const DEFAULT_SETTINGS = {
   accent: 'violet',
+  language: 'auto',
   openOn: 'dwell',
   notifications: true,
+  dnd: false,
   hideInFullscreen: true,
   yieldToWindows: true,
-  quickPaste: true,
+  display: 'primary',
+  openShortcut: '',
+  pasteShortcut: 'Control+Shift+V',
   launchAtLogin: false,
   clipboardLimit: 60,
+  calendarUrl: '',
 };
 
+const bool = (v) => typeof v === 'boolean';
 const SETTINGS_RULES = {
   accent: (v) => ['violet', 'orange'].includes(v),
-  openOn: (v) => OPEN_MODES.some((m) => m.id === v),
-  notifications: (v) => typeof v === 'boolean',
-  hideInFullscreen: (v) => typeof v === 'boolean',
-  yieldToWindows: (v) => typeof v === 'boolean',
-  quickPaste: (v) => typeof v === 'boolean',
-  launchAtLogin: (v) => typeof v === 'boolean',
+  language: (v) => ['auto', 'ru', 'en'].includes(v),
+  openOn: (v) => OPEN_MODES.includes(v),
+  notifications: bool,
+  dnd: bool,
+  hideInFullscreen: bool,
+  yieldToWindows: bool,
+  display: (v) => v === 'primary' || v === 'cursor' || /^id:\d+$/.test(v),
+  openShortcut: (v) => v === '' || ACCELERATOR.test(v),
+  pasteShortcut: (v) => v === '' || ACCELERATOR.test(v),
+  launchAtLogin: bool,
   clipboardLimit: (v) => [30, 60, 100].includes(v),
+  calendarUrl: (v) => v === '' || (/^(https?|webcal):\/\/\S+$/i.test(v) && v.length < 2000),
 };
 
 let win = null;
 let winHandle = 0;
 let tray = null;
 let store;
-let media;
+let bridge;
 let clips;
 let bookmarks;
+let calendar;
+let system;
+let updater;
 let quitting = false;
 
+let language = 'ru';
+let islandState = 'compact';
+let displayId = null;
 let shownOverFullscreen = false; // opened by a shortcut while a fullscreen app is in front
 let windowBeneath = false;       // a program window reaches up under the pill: show the "ear"
 let pasteTarget = 0;             // window that had focus when quick paste was called
-let shortcuts = { open: null, paste: false }; // registered open accelerator, paste registered?
+let shortcutsSuspended = false;  // while the settings record a new shortcut
+let shortcuts = { open: null, paste: null };
 
 const send = (channel, payload) => {
   if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
@@ -78,14 +96,37 @@ const clipView = (item) => ({
   thumb: item.thumb,
   width: item.width,
   height: item.height,
+  names: item.type === 'files' ? item.paths.map((p) => path.basename(p) || p) : undefined,
+  icon: item.icon,
   createdAt: item.createdAt,
   pinned: item.pinned,
 });
 
-// ───────────── Window ─────────────
+// ───────────── Displays ─────────────
 
-function islandBounds() {
-  const { bounds } = screen.getPrimaryDisplay();
+function displayList() {
+  const primary = screen.getPrimaryDisplay().id;
+  return screen.getAllDisplays().map((d, i) => ({
+    id: `id:${d.id}`,
+    n: i + 1,
+    primary: d.id === primary,
+    size: `${d.size.width}×${d.size.height}`,
+  }));
+}
+
+/** The display the island belongs on, by the user's choice. */
+function targetDisplay() {
+  const choice = store.get('settings').display;
+  if (choice === 'cursor') return screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  if (choice.startsWith('id:')) {
+    const chosen = screen.getAllDisplays().find((d) => `id:${d.id}` === choice);
+    if (chosen) return chosen;
+  }
+  return screen.getPrimaryDisplay();
+}
+
+function islandBounds(display) {
+  const { bounds } = display;
   return {
     x: Math.round(bounds.x + (bounds.width - WINDOW_SIZE.width) / 2),
     y: bounds.y,
@@ -93,9 +134,28 @@ function islandBounds() {
   };
 }
 
+/** Moves the island to its display; never while it is open under the pointer. */
+function syncDisplay(force = false) {
+  if (!win || win.isDestroyed()) return;
+  if (!force && islandState !== 'compact') return;
+  const display = targetDisplay();
+  if (!force && display.id === displayId) return;
+  displayId = display.id;
+  win.setBounds(islandBounds(display));
+}
+
+function onDisplaysChanged() {
+  syncDisplay(true);
+  send('displays:changed', displayList());
+}
+
+// ───────────── Window ─────────────
+
 function createWindow() {
+  const display = targetDisplay();
+  displayId = display.id;
   win = new BrowserWindow({
-    ...islandBounds(),
+    ...islandBounds(display),
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -128,6 +188,13 @@ function createWindow() {
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   win.once('ready-to-show', () => win.showInactive());
 
+  // After a reload (e.g. a language change) the page starts collapsed: drop focus and clicks.
+  win.webContents.on('did-finish-load', () => {
+    islandState = 'compact';
+    win.setIgnoreMouseEvents(true, { forward: true });
+    releaseFocus();
+  });
+
   win.on('close', (event) => {
     if (!quitting) event.preventDefault();
   });
@@ -138,10 +205,6 @@ function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
 
   if (IS_DEV) win.webContents.openDevTools({ mode: 'detach' });
-}
-
-function repositionWindow() {
-  if (win && !win.isDestroyed()) win.setBounds(islandBounds());
 }
 
 function takeFocus() {
@@ -191,7 +254,7 @@ function syncFullscreen() {
 function syncWindowBeneath() {
   let beneath = false;
   if (store.get('settings').yieldToWindows) {
-    const { bounds } = screen.getPrimaryDisplay();
+    const { bounds } = screen.getAllDisplays().find((d) => d.id === displayId) ?? screen.getPrimaryDisplay();
     const point = screen.dipToScreenPoint({ x: bounds.x + bounds.width / 2, y: bounds.y + PILL_PROBE_Y });
     const hwnd = win32.windowAt(point.x, point.y);
     // The island itself answers only while it is being used: keep the current look.
@@ -206,6 +269,7 @@ function syncWindowBeneath() {
 
 function watchWindows() {
   if (!win || win.isDestroyed()) return;
+  syncDisplay();
   syncFullscreen();
   if (!win.isVisible()) return;
   try {
@@ -230,17 +294,32 @@ function startQuickPaste() {
   send('island:quick-paste');
 }
 
+function tryRegister(accelerator, handler) {
+  try {
+    return globalShortcut.register(accelerator, handler);
+  } catch {
+    return false;
+  }
+}
+
 function registerShortcuts() {
   globalShortcut.unregisterAll();
-  const open = OPEN_SHORTCUTS.find((accelerator) => globalShortcut.register(accelerator, openFromShortcut)) ?? null;
-  const wantsPaste = store.get('settings').quickPaste;
-  const paste = wantsPaste && globalShortcut.register(PASTE_SHORTCUT, startQuickPaste);
-  if (!open) console.warn(`[app] all open shortcuts are taken: ${OPEN_SHORTCUTS.join(', ')}`);
-  if (wantsPaste && !paste) console.warn(`[app] ${PASTE_SHORTCUT} is taken by another program`);
-  shortcuts = { open, paste };
-  send('shortcuts:status', shortcuts);
+  const settings = store.get('settings');
+  if (shortcutsSuspended) {
+    shortcuts = { open: null, paste: null };
+  } else {
+    const candidates = settings.openShortcut ? [settings.openShortcut] : OPEN_SHORTCUTS;
+    const open = candidates.find((accelerator) => tryRegister(accelerator, openFromShortcut)) ?? null;
+    const paste = settings.pasteShortcut && tryRegister(settings.pasteShortcut, startQuickPaste) ? settings.pasteShortcut : null;
+    if (!open) console.warn(`[app] open shortcut is taken: ${candidates.join(', ')}`);
+    if (settings.pasteShortcut && !paste) console.warn(`[app] ${settings.pasteShortcut} is taken by another program`);
+    shortcuts = { open, paste };
+  }
+  send('shortcuts:status', shortcutStatus());
   buildTrayMenu();
 }
+
+const shortcutStatus = () => ({ ...shortcuts, suspended: shortcutsSuspended });
 
 // ───────────── Settings ─────────────
 
@@ -254,13 +333,21 @@ function setLaunchAtLogin(enabled) {
   app.setLoginItemSettings(options);
 }
 
-/** Settings saved by 0.1.0 had a single hover switch. */
+/** Older versions saved a hover switch (0.1) and a quick paste switch (0.2). */
 function migrateSettings() {
   const settings = { ...store.get('settings') };
-  if (!('hoverExpand' in settings)) return;
-  if (settings.hoverExpand === false) settings.openOn = 'click';
-  delete settings.hoverExpand;
-  store.set('settings', settings);
+  let changed = false;
+  if ('hoverExpand' in settings) {
+    if (settings.hoverExpand === false) settings.openOn = 'click';
+    delete settings.hoverExpand;
+    changed = true;
+  }
+  if ('quickPaste' in settings) {
+    if (settings.quickPaste === false) settings.pasteShortcut = '';
+    delete settings.quickPaste;
+    changed = true;
+  }
+  if (changed) store.set('settings', settings);
 }
 
 function updateSettings(patch) {
@@ -270,11 +357,20 @@ function updateSettings(patch) {
     if (SETTINGS_RULES[key]?.(value)) next[key] = value;
   }
   store.set('settings', next);
-  if (next.launchAtLogin !== current.launchAtLogin) setLaunchAtLogin(next.launchAtLogin);
-  if (next.clipboardLimit !== current.clipboardLimit) clips.applyLimit();
-  if (next.quickPaste !== current.quickPaste) registerShortcuts();
-  if (next.hideInFullscreen !== current.hideInFullscreen || next.yieldToWindows !== current.yieldToWindows) watchWindows();
+  const changed = (key) => next[key] !== current[key];
+
+  if (changed('launchAtLogin')) setLaunchAtLogin(next.launchAtLogin);
+  if (changed('clipboardLimit')) clips.applyLimit();
+  if (changed('openShortcut') || changed('pasteShortcut')) registerShortcuts();
+  if (changed('hideInFullscreen') || changed('yieldToWindows')) watchWindows();
+  if (changed('display')) syncDisplay(true);
+  if (changed('calendarUrl')) calendar.refreshFeed();
   send('settings:changed', next);
+  if (changed('language')) {
+    language = i18n.setLanguage(next.language);
+    // Every view is built with its text, so the simplest correct switch is a fresh page.
+    win.webContents.reload();
+  }
   buildTrayMenu();
   return next;
 }
@@ -289,44 +385,30 @@ function trayImage() {
 function buildTrayMenu() {
   if (!tray) return;
   const settings = store.get('settings');
+  const check = (label, key) => ({
+    label,
+    type: 'checkbox',
+    checked: settings[key],
+    click: (item) => updateSettings({ [key]: item.checked }),
+  });
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Открыть шторку', accelerator: shortcuts.open ?? undefined, click: openFromShortcut },
+    { label: t('tray.open'), accelerator: shortcuts.open ?? undefined, click: openFromShortcut },
     { type: 'separator' },
     {
-      label: 'Как открывать',
+      label: t('tray.openOn'),
       submenu: OPEN_MODES.map((mode) => ({
-        label: mode.label,
+        label: t(`tray.openOn.${mode}`),
         type: 'radio',
-        checked: settings.openOn === mode.id,
-        click: () => updateSettings({ openOn: mode.id }),
+        checked: settings.openOn === mode,
+        click: () => updateSettings({ openOn: mode }),
       })),
     },
-    {
-      label: 'Прятать в полноэкранном режиме',
-      type: 'checkbox',
-      checked: settings.hideInFullscreen,
-      click: (item) => updateSettings({ hideInFullscreen: item.checked }),
-    },
-    {
-      label: 'Уступать место окнам',
-      type: 'checkbox',
-      checked: settings.yieldToWindows,
-      click: (item) => updateSettings({ yieldToWindows: item.checked }),
-    },
-    {
-      label: 'Быстрая вставка (Ctrl+Shift+V)',
-      type: 'checkbox',
-      checked: settings.quickPaste,
-      click: (item) => updateSettings({ quickPaste: item.checked }),
-    },
-    {
-      label: 'Запускать вместе с Windows',
-      type: 'checkbox',
-      checked: settings.launchAtLogin,
-      click: (item) => updateSettings({ launchAtLogin: item.checked }),
-    },
+    check(t('tray.dnd'), 'dnd'),
+    check(t('tray.fullscreen'), 'hideInFullscreen'),
+    check(t('tray.yield'), 'yieldToWindows'),
+    check(t('tray.launch'), 'launchAtLogin'),
     { type: 'separator' },
-    { label: 'Выйти', click: () => app.quit() },
+    { label: t('tray.quit'), click: () => app.quit() },
   ]));
 }
 
@@ -342,13 +424,26 @@ function createTray() {
 function registerIpc() {
   ipcMain.handle('app:init', () => ({
     settings: store.get('settings'),
+    language,
     clipboard: clips.items.map(clipView),
     bookmarks: bookmarks.items,
-    media: media.state,
-    shortcuts: { paste: PASTE_SHORTCUT, status: shortcuts },
+    notes: store.get('notes'),
+    media: bridge.state,
+    volume: bridge.volume,
+    shortcuts: shortcutStatus(),
+    displays: displayList(),
+    update: updater.status,
+    onboarded: store.get('meta').onboarded,
     ear: windowBeneath,
     version: app.getVersion(),
   }));
+  ipcMain.on('app:onboarded', () => store.set('meta', { ...store.get('meta'), onboarded: true }));
+  // The page subscribes after app:init; anything that changed in between is sent again.
+  ipcMain.on('app:ready', () => {
+    send('island:ear', windowBeneath);
+    send('volume:changed', bridge.volume);
+    send('media:state', bridge.state);
+  });
 
   // Island window behaviour
   ipcMain.on('island:interactive', (_e, interactive) => {
@@ -361,7 +456,8 @@ function registerIpc() {
     else releaseFocus();
   });
   ipcMain.on('island:state', (_e, state) => {
-    if (state !== 'compact') return;
+    islandState = String(state);
+    if (islandState !== 'compact') return;
     pasteTarget = 0;
     if (shownOverFullscreen) {
       shownOverFullscreen = false;
@@ -369,9 +465,11 @@ function registerIpc() {
     }
   });
 
-  // Media
-  ipcMain.on('media:command', (_e, command) => media.command(command));
-  ipcMain.handle('media:thumb', (_e, key) => media.getThumb(String(key)));
+  // Media and volume
+  ipcMain.on('media:command', (_e, command) => bridge.media(command));
+  ipcMain.handle('media:thumb', (_e, key) => bridge.getThumb(String(key)));
+  ipcMain.on('volume:set', (_e, change) => bridge.setVolume(change ?? {}));
+  ipcMain.on('volume:mute', (_e, muted) => bridge.setMuted(muted));
 
   // Clipboard
   ipcMain.handle('clip:copy', (_e, id) => clips.copy(String(id)));
@@ -403,11 +501,38 @@ function registerIpc() {
   ipcMain.on('bm:move', (_e, id, index) => bookmarks.move(String(id), Number(index)));
   ipcMain.handle('bm:pick', async (_e, kind) => {
     const result = await dialog.showOpenDialog(win, {
-      title: kind === 'folder' ? 'Выберите папку' : 'Выберите файл',
+      title: kind === 'folder' ? t('dialog.pickFolder') : t('dialog.pickFile'),
       properties: [kind === 'folder' ? 'openDirectory' : 'openFile'],
     });
     return result.canceled ? null : result.filePaths[0];
   });
+
+  // Calendar
+  ipcMain.handle('cal:range', (_e, from, to) => calendar.range(Number(from), Number(to)));
+  ipcMain.handle('cal:add', (_e, event) => calendar.add(event ?? {}));
+  ipcMain.on('cal:remove', (_e, id) => calendar.remove(String(id)));
+
+  // Notes: the renderer owns the editing, the store keeps them.
+  ipcMain.on('notes:save', (_e, note) => {
+    if (!note || typeof note.id !== 'string') return;
+    const text = String(note.text ?? '').slice(0, 100_000);
+    const notes = store.get('notes').filter((n) => n.id !== note.id);
+    store.set('notes', [{ id: note.id, text, updatedAt: Date.now() }, ...notes]);
+  });
+  ipcMain.on('notes:remove', (_e, id) => store.set('notes', store.get('notes').filter((n) => n.id !== id)));
+
+  // System
+  ipcMain.on('system:watch', (_e, enabled) => system.watch(Boolean(enabled)));
+
+  // Shortcuts: recording a new one must not trigger the current ones.
+  ipcMain.on('shortcuts:suspend', (_e, suspended) => {
+    shortcutsSuspended = Boolean(suspended);
+    registerShortcuts();
+  });
+
+  // Updates
+  ipcMain.handle('update:check', () => updater.check());
+  ipcMain.on('update:install', () => updater.install());
 
   // Settings
   ipcMain.handle('settings:set', (_e, patch) => updateSettings(patch));
@@ -422,33 +547,48 @@ function bootstrap() {
     const dataDir = app.getPath('userData');
     store = new Store(path.join(dataDir, 'cstorka.json'), {
       settings: DEFAULT_SETTINGS,
+      meta: { onboarded: false },
       clipboard: [],
       bookmarks: [],
+      events: [],
+      notes: [],
     });
     migrateSettings();
+    language = i18n.setLanguage(store.get('settings').language);
 
-    media = new MediaBridge(path.join(__dirname, 'media-bridge.ps1'));
-    clips = new ClipboardHistory(store, path.join(dataDir, 'clipboard-images'));
+    bridge = new WinBridge(path.join(__dirname, 'win-bridge.ps1'));
+    clips = new ClipboardHistory(store, path.join(dataDir, 'clipboard-images'), bridge);
     bookmarks = new Bookmarks(store);
+    calendar = new Calendar(store);
+    system = new SystemMonitor();
+    updater = new Updater();
 
-    media.on('state', (state) => send('media:state', state));
-    media.on('thumb', (key) => send('media:thumb', key));
+    bridge.on('state', (state) => send('media:state', state));
+    bridge.on('thumb', (key) => send('media:thumb', key));
+    bridge.on('volume', (volume) => send('volume:changed', volume));
     clips.on('change', (items) => send('clip:changed', items.map(clipView)));
     clips.on('added', (item) => send('clip:added', clipView(item)));
     bookmarks.on('change', (items) => send('bm:changed', items));
+    calendar.on('change', () => send('cal:changed'));
+    calendar.on('reminder', (reminder) => send('cal:reminder', reminder));
+    system.on('sample', (sample) => send('system:sample', sample));
+    updater.on('status', (status) => send('update:status', status));
 
     registerIpc();
     createWindow();
     createTray();
     registerShortcuts();
 
-    media.start();
+    bridge.start();
     clips.start().catch((err) => console.warn('[clipboard] could not start:', err.message));
+    calendar.prune();
+    calendar.start();
+    updater.start();
     setInterval(watchWindows, WATCH_MS);
 
-    screen.on('display-metrics-changed', repositionWindow);
-    screen.on('display-added', repositionWindow);
-    screen.on('display-removed', repositionWindow);
+    screen.on('display-metrics-changed', onDisplaysChanged);
+    screen.on('display-added', onDisplaysChanged);
+    screen.on('display-removed', onDisplaysChanged);
   });
 
   app.on('second-instance', openFromShortcut);
@@ -456,8 +596,10 @@ function bootstrap() {
   app.on('before-quit', () => {
     quitting = true;
     globalShortcut.unregisterAll();
-    media?.stop();
+    bridge?.stop();
     clips?.stop();
+    calendar?.stop();
+    system?.watch(false);
     store?.flush();
   });
 

@@ -1,18 +1,24 @@
 {
   "name": "cstorka",
   "productName": "Cstorka",
-  "version": "0.2.0",
-  "description": "Шторка в стиле Dynamic Island для Windows: сейчас играет, история буфера обмена и закладки.",
+  "version": "0.3.0",
+  "description": "Шторка в стиле Dynamic Island для Windows: медиа, буфер обмена, закладки, таймер, календарь, система и заметки.",
   "main": "src/main/main.js",
   "author": "nikitazis688",
   "license": "MIT",
   "private": true,
+  "homepage": "https://github.com/Nikitazis/cstorka",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Nikitazis/cstorka.git"
+  },
   "keywords": [
     "dynamic-island",
     "windows",
     "electron",
     "media-controls",
-    "clipboard-history"
+    "clipboard-history",
+    "pomodoro"
   ],
   "engines": {
     "node": ">=20"
@@ -21,10 +27,13 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "preview": "node scripts/preview.js",
+    "check": "node scripts/check.js",
+    "test": "node --test \"test/*.test.js\"",
     "icon": "node scripts/make-icon.js",
+    "screenshots": "electron scripts/screenshots.js",
     "dist": "electron-builder --win",
     "dist:dir": "electron-builder --win dir",
-    "screenshots": "electron scripts/screenshots.js"
+    "release": "electron-builder --win --publish always"
   },
   "build": {
     "appId": "com.cstorka.app",
@@ -37,6 +46,14 @@
       "!src/renderer/dev/**",
       "assets/**/*",
       "package.json"
+    ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Nikitazis",
+        "repo": "cstorka",
+        "releaseType": "release"
+      }
     ],
     "win": {
       "icon": "assets/icon.png",
@@ -58,7 +75,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Cstorka"
+      "shortcutName": "Cstorka",
+      "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "portable": {
       "artifactName": "${productName}-${version}-portable.${ext}"
@@ -69,6 +87,7 @@
     "electron-builder": "^26.18.0"
   },
   "dependencies": {
+    "electron-updater": "^6.8.11",
     "koffi": "^3.3.4"
   }
 }

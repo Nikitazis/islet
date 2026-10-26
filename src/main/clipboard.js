@@ -1,10 +1,11 @@
 'use strict';
 
-const { clipboard, nativeImage, ClipboardItem } = require('electron');
+const { app, clipboard, nativeImage, ClipboardItem } = require('electron');
 const { EventEmitter } = require('node:events');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { fileURLToPath } = require('node:url');
 
 const POLL_MS = 600;
 const IMAGE_BACKOFF_MAX = 5000;
@@ -31,13 +32,31 @@ async function isPrivate(entry) {
   }
 }
 
+/** Files copied in Explorer show up as file:// lines in text/uri-list. */
+async function readFilePaths(entry) {
+  const list = await (await entry.getType('text/uri-list')).text();
+  return list.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('file:'))
+    .map((uri) => {
+      try {
+        return fileURLToPath(uri);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+}
+
 class ClipboardHistory extends EventEmitter {
-  constructor(store, imagesDir) {
+  constructor(store, imagesDir, bridge) {
     super();
     this.store = store;
     this.imagesDir = imagesDir;
+    this.bridge = bridge;
     this.lastText = '';
     this.lastImage = '';
+    this.lastFiles = '';
     this.lastTypes = '';
     this.imageBackoff = POLL_MS;
     this.nextImageCheck = 0;
@@ -95,6 +114,19 @@ class ClipboardHistory extends EventEmitter {
       return;
     }
 
+    if (entry.types.includes('text/uri-list') && !entry.types.includes('image/png')) {
+      const paths = await readFilePaths(entry);
+      const signature = paths.join('|');
+      if (!paths.length || signature === this.lastFiles) return;
+      this.lastFiles = signature;
+      this.lastText = '';
+      this.lastImage = '';
+      if (!record || await isPrivate(entry)) return;
+      this.addFiles(paths, signature);
+      return;
+    }
+    this.lastFiles = '';
+
     if (!entry.types.includes('image/png')) return;
     // Reading an image means re-encoding it, so an image that sits unchanged
     // on the clipboard is checked less and less often.
@@ -144,6 +176,21 @@ class ClipboardHistory extends EventEmitter {
     this.insert({ id, type: 'image', file, thumb, width, height, signature, createdAt: Date.now(), pinned: false });
   }
 
+  addFiles(paths, signature) {
+    const existing = this.items.find((item) => item.type === 'files' && item.signature === signature);
+    if (existing) {
+      this.bump(existing.id);
+      return;
+    }
+    const item = { id: newId(), type: 'files', paths, signature, icon: null, createdAt: Date.now(), pinned: false };
+    this.insert(item);
+    app.getFileIcon(paths[0], { size: 'normal' })
+      .then((image) => {
+        this.items = this.items.map((i) => (i.id === item.id ? { ...i, icon: image.toDataURL() } : i));
+      })
+      .catch(() => {});
+  }
+
   insert(item) {
     this.items = this.trim([item, ...this.items]);
     this.emit('added', item);
@@ -174,6 +221,11 @@ class ClipboardHistory extends EventEmitter {
     if (item.type === 'text') {
       this.lastText = item.text;
       await clipboard.writeText(item.text);
+    } else if (item.type === 'files') {
+      const paths = item.paths.filter((p) => fs.existsSync(p));
+      if (!paths.length) return false;
+      this.lastFiles = paths.join('|');
+      if (!(await this.bridge.copyFiles(paths))) return false;
     } else {
       let png;
       try {

@@ -104,6 +104,7 @@ const state = {
     { id: id(), type: 'text', kind: 'link', text: 'https://github.com/username/cstorka', length: 35, createdAt: now - 40_000, pinned: false },
     { id: id(), type: 'text', kind: 'text', text: 'Созвон перенесли на четверг, 15:30. Ссылку пришлю в чат за полчаса.', length: 68, createdAt: now - 6 * 60_000, pinned: false },
     { id: id(), type: 'image', thumb: covers.shot, width: 1920, height: 1200, createdAt: now - 25 * 60_000, pinned: false },
+    { id: id(), type: 'files', names: ['Отчёт за октябрь.pdf', 'Графики.xlsx'], icon: null, createdAt: now - 2 * 3_600_000, pinned: false },
     { id: id(), type: 'text', kind: 'text', text: 'npm run dist', length: 12, createdAt: now - 3 * 3_600_000, pinned: false },
     { id: id(), type: 'text', kind: 'text', text: 'Москва, ул. Тверская, д. 7, подъезд 2, код домофона 214', length: 55, createdAt: now - 26 * 3_600_000, pinned: true },
   ],
@@ -115,15 +116,36 @@ const state = {
     { id: id(), type: 'folder', target: 'C:\\Users\\me\\Downloads', title: 'Загрузки', icon: null },
     { id: id(), type: 'file', target: 'C:\\Users\\me\\Documents\\План.docx', title: 'План.docx', icon: null },
   ],
+  notes: [
+    { id: id(), text: 'Купить к выходным\nмолоко, кофе, батарейки AA', updatedAt: now - 20 * 60_000 },
+    { id: id(), text: 'Идеи для шторки\n— погода в пилюле\n— быстрые ответы в Telegram', updatedAt: now - 26 * 3_600_000 },
+  ],
+  events: [],
   settings: {
-    accent: 'violet', openOn: 'dwell', notifications: true, hideInFullscreen: true,
-    yieldToWindows: true, quickPaste: true, launchAtLogin: false, clipboardLimit: 60,
+    accent: 'violet', language: 'auto', openOn: 'dwell', notifications: true, dnd: false,
+    hideInFullscreen: true, yieldToWindows: true, display: 'primary',
+    openShortcut: '', pasteShortcut: 'Control+Shift+V', launchAtLogin: false, clipboardLimit: 60, calendarUrl: '',
   },
 };
+
+// A few events around today, as if they came from the user's calendar.
+const today = new Date();
+const at = (dayOffset, h, m = 0) => new Date(today.getFullYear(), today.getMonth(), today.getDate() + dayOffset, h, m).getTime();
+state.events = [
+  { id: id(), title: 'Созвон с командой', start: at(0, 10, 30), end: at(0, 11), allDay: false, source: 'feed' },
+  { id: id(), title: 'Обед с Аней', start: at(0, 13), end: at(0, 14), allDay: false, source: 'local' },
+  { id: id(), title: 'Ревью дизайна шторки', start: at(0, 16, 30), end: at(0, 17, 30), allDay: false, source: 'feed' },
+  { id: id(), title: 'День рождения Димы', start: at(2, 0), end: at(3, 0), allDay: true, source: 'feed' },
+  { id: id(), title: 'Сдать отчёт', start: at(5, 12), end: at(5, 12), allDay: false, source: 'local' },
+];
 
 const pushMedia = () => emit('media', clone(state.media));
 const pushClips = () => emit('clips', clone(state.clipboard));
 const pushBookmarks = () => emit('bookmarks', clone(state.bookmarks));
+
+let volume = { supported: true, level: 0.62, muted: false };
+let systemTimer = null;
+let tickN = 0;
 
 function addClip(text) {
   const item = { id: id(), type: 'text', kind: /^https?:/.test(text) ? 'link' : 'text', text, length: text.length, createdAt: Date.now(), pinned: false };
@@ -132,13 +154,23 @@ function addClip(text) {
   emit('added', clone(item));
 }
 
+const params = new URLSearchParams(location.search);
+
 window.cstorka = {
   demo: true,
   init: async () => ({
     ...clone(state),
-    shortcuts: { paste: 'Control+Shift+V', status: { open: 'Control+Alt+Space', paste: true } },
-    version: '0.2.0',
+    language: params.get('lang') ?? 'ru',
+    volume: clone(volume),
+    shortcuts: { open: 'Control+Alt+Space', paste: 'Control+Shift+V', suspended: false },
+    displays: [{ id: 'id:1', n: 1, primary: true, size: '1920×1080' }],
+    update: { state: 'latest' },
+    onboarded: !params.get('onboarding'),
+    ear: false,
+    version: '0.3.0',
   }),
+  onboarded() {},
+  ready() {},
 
   island: {
     setInteractive() {},
@@ -149,7 +181,78 @@ window.cstorka = {
     onQuickPaste: (cb) => on('quick-paste', cb),
     onEar: (cb) => on('ear', cb),
     onBlur: (cb) => on('blur', cb),
-    onShortcuts: (cb) => on('shortcuts', cb),
+  },
+
+  shortcuts: {
+    suspend() {},
+    onChange: (cb) => on('shortcuts', cb),
+  },
+
+  displays: { onChange: (cb) => on('displays', cb) },
+
+  volume: {
+    set({ value, delta }) {
+      const level = Number.isFinite(delta) ? volume.level + delta : value;
+      volume = { ...volume, level: Math.min(1, Math.max(0, level)), muted: false };
+      emit('volume', clone(volume));
+    },
+    mute(muted) {
+      volume = { ...volume, muted: Boolean(muted) };
+      emit('volume', clone(volume));
+    },
+    onChange: (cb) => on('volume', cb),
+  },
+
+  calendar: {
+    async range(from, to) {
+      return { items: state.events.filter((e) => e.start < to && Math.max(e.end, e.start + 1) > from), feed: { ok: true, connected: true } };
+    },
+    async add({ title, date, time }) {
+      if (!title?.trim()) return null;
+      const [y, m, d] = date.split('-').map(Number);
+      const [hh, mm] = (time || '0:0').split(':').map(Number);
+      const start = new Date(y, m - 1, d, hh, mm).getTime();
+      const event = { id: id(), title: title.trim(), start, end: start, allDay: !time, source: 'local' };
+      state.events.push(event);
+      state.events.sort((a, b) => a.start - b.start);
+      emit('cal');
+      return event;
+    },
+    remove(eventId) {
+      state.events = state.events.filter((e) => e.id !== eventId);
+      emit('cal');
+    },
+    onChange: (cb) => on('cal', cb),
+    onReminder: (cb) => on('reminder', cb),
+  },
+
+  notes: { save() {}, remove() {} },
+
+  system: {
+    watch(enabled) {
+      clearInterval(systemTimer);
+      if (!enabled) return;
+      const sample = () => {
+        tickN += 1;
+        emit('system', {
+          cpu: 0.18 + 0.12 * Math.sin(tickN / 2) + Math.random() * 0.08,
+          memory: { used: 11.9 * 2 ** 30, total: 15.7 * 2 ** 30 },
+          disk: { drive: 'C:', free: 112 * 2 ** 30, total: 476 * 2 ** 30 },
+          network: { down: (1.2 + Math.sin(tickN / 3)) * 2 ** 20, up: 96 * 2 ** 10 },
+          battery: { percent: 84, plugged: false, charging: false, secondsLeft: 3 * 3600 + 20 * 60 },
+          uptime: 2 * 86_400 + 5 * 3600,
+        });
+      };
+      for (let i = 0; i < 30; i++) sample();
+      systemTimer = setInterval(sample, 1500);
+    },
+    onSample: (cb) => on('system', cb),
+  },
+
+  updates: {
+    check: async () => ({ state: 'latest' }),
+    install() {},
+    onStatus: (cb) => on('update', cb),
   },
 
   media: {
@@ -231,7 +334,13 @@ window.cstorka = {
 
   settings: {
     async set(patch) {
+      const languageChanged = patch.language && patch.language !== state.settings.language;
       state.settings = { ...state.settings, ...patch };
+      if (languageChanged) {
+        const url = new URL(location.href);
+        url.searchParams.set('lang', patch.language === 'en' ? 'en' : 'ru');
+        location.href = url.href;
+      }
       return clone(state.settings);
     },
     onChange: (cb) => on('settings', cb),

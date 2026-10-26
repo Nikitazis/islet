@@ -1,11 +1,15 @@
-# Cstorka media bridge.
-# Reads the Windows Global System Media Transport Controls (the same source the
-# Windows volume flyout uses) and streams JSON lines to stdout:
-#   {"type":"state", ...}   - when anything about the sessions changes
+# Cstorka Windows bridge.
+# Reads what PowerShell reaches easily and Node doesn't, and streams JSON lines to stdout:
+#   {"type":"state", ...}   - media sessions (Global System Media Transport Controls,
+#                             the source of the Windows volume flyout) when they change
 #   {"type":"thumb", ...}   - album art / video thumbnail as a data URL, once per track
+#   {"type":"volume", ...}  - master volume and mute when they change
+#   {"type":"ack", ...}     - a command with an "id" has finished
 #   {"type":"error", ...}
 # Commands arrive as JSON lines on stdin:
 #   {"cmd":"toggle|play|pause|next|prev|seek","app":"<AUMID>","index":0,"position":12345}
+#   {"cmd":"volume","value":0.5}  {"cmd":"volume","delta":0.04}  {"cmd":"mute","muted":true}
+#   {"cmd":"copyFiles","paths":["C:\\a.txt"],"id":7}
 # The script exits when stdin is closed, so it never outlives the app.
 
 $ErrorActionPreference = 'Stop'
@@ -13,6 +17,7 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 [Console]::OutputEncoding = $utf8
 
 Add-Type -AssemblyName System.Runtime.WindowsRuntime
+Add-Type -AssemblyName System.Windows.Forms
 $null = [Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager, Windows.Media.Control, ContentType = WindowsRuntime]
 $null = [Windows.Storage.Streams.IRandomAccessStreamWithContentType, Windows.Storage.Streams, ContentType = WindowsRuntime]
 
@@ -30,6 +35,88 @@ function Await($operation, [Type]$resultType, [int]$timeoutMs = 3000) {
 function Send($obj) {
     [Console]::Out.WriteLine(($obj | ConvertTo-Json -Compress -Depth 5))
     [Console]::Out.Flush()
+}
+
+# --- Master volume (Core Audio) ----------------------------------------------
+# The unnamed methods only hold the vtable slots of methods we don't call.
+
+$audioSupported = $true
+try {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+[Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ICstorkaEndpointVolume {
+    int f(); int g(); int h(); int i();
+    int SetMasterVolumeLevelScalar(float level, Guid context);
+    int j();
+    int GetMasterVolumeLevelScalar(out float level);
+    int k(); int l(); int m(); int n();
+    int SetMute([MarshalAs(UnmanagedType.Bool)] bool mute, Guid context);
+    int GetMute(out bool mute);
+}
+
+[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ICstorkaDevice {
+    int Activate(ref Guid id, int clsCtx, int activationParams, out ICstorkaEndpointVolume volume);
+}
+
+[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface ICstorkaDeviceEnumerator {
+    int f();
+    int GetDefaultAudioEndpoint(int dataFlow, int role, out ICstorkaDevice device);
+}
+
+[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
+class CstorkaDeviceEnumerator { }
+
+public static class CstorkaAudio {
+    static ICstorkaEndpointVolume endpoint;
+    static DateTime acquired;
+
+    // Re-acquired every few seconds so a new default device (headphones) is picked up.
+    static ICstorkaEndpointVolume Endpoint() {
+        if (endpoint == null || (DateTime.UtcNow - acquired).TotalSeconds > 5) {
+            var enumerator = new CstorkaDeviceEnumerator() as ICstorkaDeviceEnumerator;
+            ICstorkaDevice device;
+            Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out device));
+            Guid id = typeof(ICstorkaEndpointVolume).GUID;
+            ICstorkaEndpointVolume volume;
+            Marshal.ThrowExceptionForHR(device.Activate(ref id, 23, 0, out volume));
+            endpoint = volume;
+            acquired = DateTime.UtcNow;
+        }
+        return endpoint;
+    }
+
+    public static float Level {
+        get { float v; Marshal.ThrowExceptionForHR(Endpoint().GetMasterVolumeLevelScalar(out v)); return v; }
+        set { Marshal.ThrowExceptionForHR(Endpoint().SetMasterVolumeLevelScalar(Math.Max(0f, Math.Min(1f, value)), Guid.Empty)); }
+    }
+
+    public static bool Muted {
+        get { bool m; Marshal.ThrowExceptionForHR(Endpoint().GetMute(out m)); return m; }
+        set { Marshal.ThrowExceptionForHR(Endpoint().SetMute(value, Guid.Empty)); }
+    }
+}
+'@
+} catch {
+    $audioSupported = $false
+    Send @{ type = 'volume'; supported = $false }
+}
+
+$lastVolume = ''
+
+function Emit-Volume {
+    if (-not $audioSupported) { return }
+    $level = [math]::Round([CstorkaAudio]::Level, 3)
+    $muted = [CstorkaAudio]::Muted
+    $key = "$level|$muted"
+    if ($key -ne $script:lastVolume) {
+        $script:lastVolume = $key
+        Send ([ordered]@{ type = 'volume'; supported = $true; level = $level; muted = $muted })
+    }
 }
 
 # --- Friendly app names ------------------------------------------------------
@@ -87,7 +174,7 @@ function Read-Thumbnail($reference) {
     }
 }
 
-# --- State -------------------------------------------------------------------
+# --- Media sessions ----------------------------------------------------------
 
 $manager = Await ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]::RequestAsync()) `
     ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionManager]) 10000
@@ -177,8 +264,9 @@ function Find-Session($command) {
     return $manager.GetCurrentSession()
 }
 
-function Invoke-MediaCommand([string]$line) {
-    $command = $line | ConvertFrom-Json
+# --- Commands ----------------------------------------------------------------
+
+function Invoke-MediaCommand($command) {
     $session = Find-Session $command
     if ($null -eq $session) { return }
     $op = switch ($command.cmd) {
@@ -190,6 +278,37 @@ function Invoke-MediaCommand([string]$line) {
         'seek'   { $session.TryChangePlaybackPositionAsync([long]([double]$command.position * 10000)) }
     }
     if ($op) { $null = Await $op ([bool]) }
+}
+
+function Invoke-BridgeCommand([string]$line) {
+    $command = $line | ConvertFrom-Json
+    $ok = $true
+    switch ($command.cmd) {
+        'volume' {
+            if (-not $audioSupported) { $ok = $false; break }
+            if ($null -ne $command.delta) {
+                [CstorkaAudio]::Level = [CstorkaAudio]::Level + [double]$command.delta
+                if ([double]$command.delta -gt 0) { [CstorkaAudio]::Muted = $false }
+            } else {
+                [CstorkaAudio]::Level = [double]$command.value
+            }
+        }
+        'mute' {
+            if (-not $audioSupported) { $ok = $false; break }
+            $muted = if ($null -eq $command.muted) { -not [CstorkaAudio]::Muted } else { [bool]$command.muted }
+            [CstorkaAudio]::Muted = $muted
+        }
+        'copyFiles' {
+            # SetFileDropList needs an STA thread, which powershell.exe uses by default.
+            $list = New-Object System.Collections.Specialized.StringCollection
+            foreach ($path in @($command.paths)) {
+                if (Test-Path -LiteralPath $path) { [void]$list.Add($path) }
+            }
+            if ($list.Count -gt 0) { [System.Windows.Forms.Clipboard]::SetFileDropList($list) } else { $ok = $false }
+        }
+        default { Invoke-MediaCommand $command }
+    }
+    if ($null -ne $command.id) { Send @{ type = 'ack'; id = $command.id; ok = $ok } }
 }
 
 # --- Main loop ---------------------------------------------------------------
@@ -204,12 +323,15 @@ while ($true) {
         $line = $pending.Result
         if ($null -eq $line) { exit 0 }
         if ($line.Trim()) {
-            try { Invoke-MediaCommand $line } catch { Send @{ type = 'error'; message = "$_" } }
+            try { Invoke-BridgeCommand $line } catch { Send @{ type = 'error'; message = "$_" } }
             $forceRefresh = $true
         }
         $pending = $stdin.ReadLineAsync()
     }
 
+    if ($forceRefresh -or $tick % 2 -eq 0) {
+        try { Emit-Volume } catch { }
+    }
     if ($forceRefresh) { Start-Sleep -Milliseconds 120 }
     if ($forceRefresh -or $tick % 8 -eq 0) {
         try { Emit-State } catch { Send @{ type = 'error'; message = "$_" } }

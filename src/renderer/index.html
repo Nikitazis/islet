@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'">
+        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Cstorka</title>
   <link rel="stylesheet" href="styles.css">
@@ -12,39 +12,53 @@
   <main class="stage">
     <div class="island" id="island" data-state="compact">
 
-      <!-- Collapsed: clock and date, plus a hint of what's playing -->
-      <section class="layer layer-compact" aria-label="Время">
+      <!-- Collapsed: clock and date, plus what's going on (music, a running timer) -->
+      <section class="layer layer-compact">
         <img class="mini-art" id="mini-art" alt="">
+        <span class="dnd-mark" id="dnd-mark"></span>
         <span class="clock" id="clock"></span>
         <span class="date" id="date"></span>
+        <span class="live" id="live">
+          <svg class="live-ring" viewBox="0 0 20 20" aria-hidden="true">
+            <circle class="live-track" cx="10" cy="10" r="7.5"/>
+            <circle class="live-progress" id="live-progress" cx="10" cy="10" r="7.5"/>
+          </svg>
+          <b id="live-time"></b>
+        </span>
         <span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
       </section>
 
-      <!-- Short notification: copied text, next track -->
+      <!-- Short notification: copied text, next track, volume, timer -->
       <section class="layer layer-peek" aria-live="polite">
         <div class="peek-icon" id="peek-icon"></div>
         <div class="peek-text">
           <strong id="peek-title"></strong>
           <span id="peek-sub"></span>
+          <div class="peek-bar" id="peek-bar"><i></i></div>
         </div>
       </section>
 
       <!-- Expanded panel -->
       <section class="layer layer-expanded">
         <header class="bar">
-          <nav class="tabs" role="tablist" aria-label="Разделы">
+          <nav class="tabs" role="tablist">
             <span class="tabs-indicator" aria-hidden="true"></span>
           </nav>
           <div class="bar-end">
             <span class="bar-clock"><b id="bar-time"></b><span id="bar-date"></span></span>
-            <button class="icon-btn" id="settings-btn" type="button" aria-label="Настройки" aria-pressed="false"></button>
+            <button class="icon-btn" id="dnd-btn" type="button" aria-pressed="false"></button>
+            <button class="icon-btn" id="settings-btn" type="button" aria-pressed="false"></button>
           </div>
         </header>
         <div class="panes">
-          <section class="pane" data-pane="media" role="tabpanel" aria-label="Медиа"></section>
-          <section class="pane" data-pane="clipboard" role="tabpanel" aria-label="Буфер обмена"></section>
-          <section class="pane" data-pane="bookmarks" role="tabpanel" aria-label="Закладки"></section>
-          <section class="pane" data-pane="settings" aria-label="Настройки"></section>
+          <section class="pane" data-pane="media" role="tabpanel"></section>
+          <section class="pane" data-pane="clipboard" role="tabpanel"></section>
+          <section class="pane" data-pane="bookmarks" role="tabpanel"></section>
+          <section class="pane" data-pane="timer" role="tabpanel"></section>
+          <section class="pane" data-pane="calendar" role="tabpanel"></section>
+          <section class="pane" data-pane="system" role="tabpanel"></section>
+          <section class="pane" data-pane="notes" role="tabpanel"></section>
+          <section class="pane" data-pane="settings"></section>
         </div>
       </section>
 

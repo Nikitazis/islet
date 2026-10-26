@@ -1,5 +1,6 @@
 import { h, iconEl } from '../lib/dom.js';
 import { duration } from '../lib/format.js';
+import { t } from '../lib/i18n.js';
 
 const sessionId = (s) => `${s.app}#${s.index}`;
 const trackKey = (s) => `${s.app}|${s.title}|${s.artist}`;
@@ -16,11 +17,13 @@ function inspectImage(url) {
 
 export function createMediaView(root, api, hooks) {
   let state = { current: -1, sessions: [] };
+  let volume = { supported: false, level: 0, muted: false };
   let selected = null;
   let visible = false;
   let lastTrack = null;
   let ready = false;
   let frame = 0;
+  let draggingVolume = false;
   const thumbs = new Map();
 
   // ── DOM ──
@@ -35,17 +38,39 @@ export function createMediaView(root, api, hooks) {
   const elapsed = h('span');
   const remaining = h('span');
   const progress = h('div', { class: 'progress' }, track, h('div', { class: 'times' }, elapsed, remaining));
-  const prevBtn = h('button', { class: 'ctrl', type: 'button', 'aria-label': 'Предыдущий трек', icon: 'prev', onClick: () => send('prev') });
+  const prevBtn = h('button', { class: 'ctrl', type: 'button', 'aria-label': t('media.prev'), icon: 'prev', onClick: () => send('prev') });
   const toggleBtn = h('button', { class: 'ctrl is-main', type: 'button', onClick: toggle });
-  const nextBtn = h('button', { class: 'ctrl', type: 'button', 'aria-label': 'Следующий трек', icon: 'next', onClick: () => send('next') });
+  const nextBtn = h('button', { class: 'ctrl', type: 'button', 'aria-label': t('media.next'), icon: 'next', onClick: () => send('next') });
+
+  const muteBtn = h('button', { class: 'icon-btn vol-btn', type: 'button', onClick: () => api.volume.mute(!volume.muted) });
+  const volRange = h('input', {
+    class: 'vol-range',
+    type: 'range',
+    min: 0,
+    max: 100,
+    'aria-label': t('media.volume'),
+    onInput: (e) => {
+      volume = { ...volume, level: e.target.value / 100, muted: false };
+      api.volume.set({ value: volume.level });
+      renderVolume();
+    },
+    onPointerdown: () => { draggingVolume = true; },
+    onPointerup: () => { draggingVolume = false; },
+  });
+  const volValue = h('span', { class: 'vol-value' });
+  const volumeRow = h('div', { class: 'volume' }, muteBtn, volRange, volValue);
+
   const player = h('div', { class: 'media' },
     artWrap,
-    h('div', { class: 'meta' }, sources, title, artist, progress, h('div', { class: 'controls' }, prevBtn, toggleBtn, nextBtn)),
+    h('div', { class: 'meta' },
+      sources, title, artist, progress,
+      h('div', { class: 'controls' }, prevBtn, toggleBtn, nextBtn),
+      volumeRow),
   );
   const empty = h('div', { class: 'empty' },
     h('div', { class: 'empty-icon', icon: 'music' }),
-    h('strong', {}, 'Сейчас ничего не играет'),
-    h('p', {}, 'Включите музыку или видео в любом плеере или браузере — здесь появятся обложка и управление.'),
+    h('strong', {}, t('media.empty.title')),
+    h('p', {}, t('media.empty.text')),
   );
   root.append(player, empty);
 
@@ -128,6 +153,18 @@ export function createMediaView(root, api, hooks) {
     remaining.textContent = `−${duration(s.duration - pos)}`;
   }
 
+  function renderVolume() {
+    volumeRow.hidden = !volume.supported;
+    const level = Math.round(volume.level * 100);
+    const shownLevel = volume.muted ? 0 : level;
+    if (!draggingVolume) volRange.value = String(level);
+    volRange.style.setProperty('--v', `${shownLevel}%`);
+    volValue.textContent = `${shownLevel}%`;
+    muteBtn.replaceChildren(iconEl(volume.muted || level === 0 ? 'speakerOff' : 'speaker'));
+    muteBtn.setAttribute('aria-label', volume.muted ? t('media.unmute') : t('media.mute'));
+    muteBtn.title = muteBtn.getAttribute('aria-label');
+  }
+
   function loop() {
     renderProgress();
     frame = requestAnimationFrame(loop);
@@ -167,11 +204,11 @@ export function createMediaView(root, api, hooks) {
     artWrap.classList.toggle('is-paused', !playing);
 
     renderSources(state.sessions, s);
-    title.textContent = s.title || 'Без названия';
+    title.textContent = s.title || t('media.untitled');
     artist.textContent = s.artist || s.album || s.appName;
 
     toggleBtn.replaceChildren(iconEl(playing ? 'pause' : 'play'));
-    toggleBtn.setAttribute('aria-label', playing ? 'Пауза' : 'Играть');
+    toggleBtn.setAttribute('aria-label', playing ? t('media.pause') : t('media.play'));
     toggleBtn.disabled = !s.canToggle;
     prevBtn.disabled = !s.canPrev;
     nextBtn.disabled = !s.canNext;
@@ -208,6 +245,10 @@ export function createMediaView(root, api, hooks) {
     update(next) {
       state = next;
       render();
+    },
+    setVolume(next) {
+      volume = next;
+      renderVolume();
     },
     setVisible(value) {
       visible = value;

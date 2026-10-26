@@ -1,9 +1,8 @@
 import { h, iconEl } from '../lib/dom.js';
-import { formatNumber, plural, timeAgo } from '../lib/format.js';
+import { timeAgo } from '../lib/format.js';
+import { t } from '../lib/i18n.js';
 
 const KIND_ICON = { text: 'text', link: 'link' };
-const SEARCH_HINT = 'Поиск по истории';
-const PASTE_HINT = 'Найдите запись и нажмите Enter, чтобы вставить';
 
 export function createClipboardView(root, api, hooks) {
   let items = [];
@@ -16,7 +15,7 @@ export function createClipboardView(root, api, hooks) {
   const search = h('input', {
     class: 'input',
     type: 'search',
-    placeholder: SEARCH_HINT,
+    placeholder: t('clip.search'),
     spellcheck: false,
     onInput: (e) => { query = e.target.value.trim().toLowerCase(); render(); },
     onKeydown: (e) => {
@@ -31,7 +30,7 @@ export function createClipboardView(root, api, hooks) {
     },
   });
   const count = h('span', { class: 'clip-count' });
-  const clearBtn = h('button', { class: 'btn btn-ghost', type: 'button', onClick: clear }, 'Очистить');
+  const clearBtn = h('button', { class: 'btn btn-ghost', type: 'button', onClick: clear }, t('clip.clear'));
   const list = h('div', { class: 'clip-list scroll', role: 'list' });
   const empty = h('div', { class: 'empty' });
 
@@ -45,7 +44,7 @@ export function createClipboardView(root, api, hooks) {
   function clear() {
     if (!clearBtn.classList.contains('is-danger')) {
       clearBtn.classList.add('is-danger');
-      clearBtn.textContent = 'Очистить всё?';
+      clearBtn.textContent = t('clip.clearConfirm');
       confirmTimer = setTimeout(resetClear, 3000);
       return;
     }
@@ -56,7 +55,7 @@ export function createClipboardView(root, api, hooks) {
   function resetClear() {
     clearTimeout(confirmTimer);
     clearBtn.classList.remove('is-danger');
-    clearBtn.textContent = 'Очистить';
+    clearBtn.textContent = t('clip.clear');
   }
 
   function activate(item, row) {
@@ -66,7 +65,10 @@ export function createClipboardView(root, api, hooks) {
 
   async function copy(item, row) {
     const ok = await api.clipboard.copy(item.id);
-    if (!ok) return;
+    if (!ok) {
+      if (item.type === 'files') hooks.notify({ icon: 'file', title: t('clip.filesMissing'), sub: item.names[0] });
+      return;
+    }
     row.classList.add('is-copied');
     setTimeout(() => row.classList.remove('is-copied'), 1100);
   }
@@ -77,45 +79,53 @@ export function createClipboardView(root, api, hooks) {
     hooks.collapse();
     // The target refused synthetic keys (e.g. it runs as administrator): the entry is still copied.
     if (result.ok && !result.pasted) {
-      hooks.notify({ icon: 'clipboard', title: 'Скопировано', sub: 'Вставьте сочетанием Ctrl + V' });
+      hooks.notify({ icon: 'clipboard', title: t('peek.copied'), sub: t('peek.pasteFallback') });
     }
   }
 
   function endQuickPaste() {
     quickPaste = false;
     list.classList.remove('is-quick');
-    search.placeholder = SEARCH_HINT;
+    search.placeholder = t('clip.search');
   }
 
   // ── Render ──
   function describe(item) {
-    if (item.type === 'image') return `Изображение ${item.width} × ${item.height}`;
+    if (item.type === 'image') return t('clip.imageMeta', { width: item.width, height: item.height });
     const when = timeAgo(item.createdAt);
-    if (item.length > 300) return `${when}, ${formatNumber(item.length)} ${plural(item.length, 'символ', 'символа', 'символов')}`;
+    if (item.type === 'files') return `${t('clip.files', { count: item.names.length })}, ${when}`;
+    if (item.length > 300) return `${when}, ${t('clip.chars', { count: item.length })}`;
     return when;
   }
 
+  function preview(item) {
+    if (item.type === 'image') return t('clip.image');
+    if (item.type === 'files') {
+      const [first, second] = item.names;
+      return item.names.length > 2 ? `${first}, ${second}…` : item.names.join(', ');
+    }
+    return item.text.replace(/\s+/g, ' ').trim();
+  }
+
+  function kindIcon(item) {
+    if (item.type === 'image') return h('div', { class: 'clip-kind is-thumb' }, h('img', { src: item.thumb, alt: '' }));
+    if (item.type === 'files' && item.icon) return h('div', { class: 'clip-kind is-file' }, h('img', { src: item.icon, alt: '' }));
+    return h('div', { class: 'clip-kind' }, iconEl(item.type === 'files' ? 'file' : KIND_ICON[item.kind] ?? 'text'));
+  }
+
   function row(item) {
-    const kind = item.type === 'image'
-      ? h('div', { class: 'clip-kind is-thumb' }, h('img', { src: item.thumb, alt: '' }))
-      : h('div', { class: 'clip-kind' }, iconEl(KIND_ICON[item.kind] ?? 'text'));
-
-    const text = item.type === 'image'
-      ? h('div', { class: 'clip-text' }, 'Картинка')
-      : h('div', { class: 'clip-text' }, item.text.replace(/\s+/g, ' ').trim());
-
     const pinBtn = h('button', {
       class: 'icon-btn pin-btn',
       type: 'button',
-      'aria-label': item.pinned ? 'Открепить' : 'Закрепить',
-      title: item.pinned ? 'Открепить' : 'Закрепить',
+      'aria-label': item.pinned ? t('clip.unpin') : t('clip.pin'),
+      title: item.pinned ? t('clip.unpin') : t('clip.pin'),
       onClick: (e) => { e.stopPropagation(); api.clipboard.togglePin(item.id); },
     }, iconEl('pin'));
     const removeBtn = h('button', {
       class: 'icon-btn',
       type: 'button',
-      'aria-label': 'Удалить',
-      title: 'Удалить',
+      'aria-label': t('clip.remove'),
+      title: t('clip.remove'),
       onClick: (e) => { e.stopPropagation(); api.clipboard.remove(item.id); },
     }, iconEl('trash'));
 
@@ -123,7 +133,7 @@ export function createClipboardView(root, api, hooks) {
       class: `clip${item.pinned ? ' is-pinned' : ''}`,
       role: 'listitem',
       tabIndex: 0,
-      dataset: { kind: item.type === 'image' ? 'image' : item.kind },
+      dataset: { kind: item.type === 'text' ? item.kind : item.type },
       onClick: () => activate(item, el),
       onKeydown: (e) => {
         if (e.key === 'Enter') activate(item, el);
@@ -132,15 +142,15 @@ export function createClipboardView(root, api, hooks) {
         else if (e.key === 'Delete') api.clipboard.remove(item.id);
       },
     },
-    kind,
-    h('div', { class: 'clip-body' }, text, h('div', { class: 'clip-meta' }, describe(item))),
+    kindIcon(item),
+    h('div', { class: 'clip-body' }, h('div', { class: 'clip-text' }, preview(item)), h('div', { class: 'clip-meta' }, describe(item))),
     h('div', { class: 'clip-actions' }, pinBtn, removeBtn),
-    h('div', { class: 'clip-done', 'aria-hidden': 'true' }, iconEl('check'), 'Скопировано'),
-    h('div', { class: 'clip-enter', 'aria-hidden': 'true' }, h('kbd', {}, 'Enter'), 'вставить'));
+    h('div', { class: 'clip-done', 'aria-hidden': 'true' }, iconEl('check'), t('peek.copied')),
+    h('div', { class: 'clip-enter', 'aria-hidden': 'true' }, h('kbd', {}, 'Enter'), t('clip.paste')));
     return el;
   }
 
-  /** Neighbouring entry, skipping the "Недавние" header. */
+  /** Neighbouring entry, skipping the "Recent" header. */
   function nextRow(el, direction) {
     let next = el[direction];
     while (next && !next.classList.contains('clip')) next = next[direction];
@@ -149,7 +159,10 @@ export function createClipboardView(root, api, hooks) {
 
   function matches(item) {
     if (!query) return true;
-    if (item.type === 'image') return 'изображение картинка скриншот'.includes(query);
+    if (item.type === 'image') return t('clip.searchWords.image').includes(query);
+    if (item.type === 'files') {
+      return t('clip.searchWords.files').includes(query) || item.names.some((n) => n.toLowerCase().includes(query));
+    }
     return item.text.toLowerCase().includes(query);
   }
 
@@ -167,26 +180,24 @@ export function createClipboardView(root, api, hooks) {
 
     list.replaceChildren(
       ...pinned.map(row),
-      ...(pinned.length && recent.length ? [h('div', { class: 'clip-section' }, 'Недавние')] : []),
+      ...(pinned.length && recent.length ? [h('div', { class: 'clip-section' }, t('clip.recent'))] : []),
       ...recent.map(row),
     );
     list.querySelector('.clip')?.classList.add('is-target');
     list.scrollTop = scroll;
 
-    count.textContent = items.length
-      ? `${items.length} ${plural(items.length, 'запись', 'записи', 'записей')}`
-      : '';
+    count.textContent = items.length ? t('clip.count', { count: items.length }) : '';
     clearBtn.hidden = !recent.length || Boolean(query) || quickPaste;
 
     list.hidden = !visible.length;
     empty.hidden = Boolean(visible.length);
     if (!visible.length) {
       empty.replaceChildren(...(query
-        ? [h('strong', {}, 'Ничего не нашлось'), h('p', {}, `В истории нет записей с «${query}».`)]
+        ? [h('strong', {}, t('clip.nothingFound')), h('p', {}, t('clip.nothingFoundText', { query }))]
         : [
           h('div', { class: 'empty-icon', icon: 'clipboard' }),
-          h('strong', {}, 'История пока пуста'),
-          h('p', {}, 'Скопируйте текст, ссылку или картинку в любой программе — запись появится здесь.'),
+          h('strong', {}, t('clip.empty.title')),
+          h('p', {}, t('clip.empty.text')),
         ]));
     }
   }
@@ -196,7 +207,7 @@ export function createClipboardView(root, api, hooks) {
     render();
   });
 
-  // Keep "5 мин назад" honest while the list is on screen.
+  // Keep "5 min ago" honest while the list is on screen.
   setInterval(() => { if (root.classList.contains('is-active')) render(); }, 30_000);
 
   return {
@@ -217,7 +228,7 @@ export function createClipboardView(root, api, hooks) {
       quickPaste = true;
       query = '';
       search.value = '';
-      search.placeholder = PASTE_HINT;
+      search.placeholder = t('clip.pasteHint');
       list.classList.add('is-quick');
       list.scrollTop = 0;
       render();

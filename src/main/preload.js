@@ -10,6 +10,8 @@ const on = (channel, callback) => {
 
 contextBridge.exposeInMainWorld('cstorka', {
   init: () => ipcRenderer.invoke('app:init'),
+  onboarded: () => ipcRenderer.send('app:onboarded'),
+  ready: () => ipcRenderer.send('app:ready'),
 
   island: {
     setInteractive: (interactive) => ipcRenderer.send('island:interactive', Boolean(interactive)),
@@ -20,7 +22,15 @@ contextBridge.exposeInMainWorld('cstorka', {
     onQuickPaste: (callback) => on('island:quick-paste', callback),
     onEar: (callback) => on('island:ear', callback),
     onBlur: (callback) => on('island:blur', callback),
-    onShortcuts: (callback) => on('shortcuts:status', callback),
+  },
+
+  shortcuts: {
+    suspend: (suspended) => ipcRenderer.send('shortcuts:suspend', Boolean(suspended)),
+    onChange: (callback) => on('shortcuts:status', callback),
+  },
+
+  displays: {
+    onChange: (callback) => on('displays:changed', callback),
   },
 
   media: {
@@ -28,6 +38,12 @@ contextBridge.exposeInMainWorld('cstorka', {
     thumb: (key) => ipcRenderer.invoke('media:thumb', key),
     onState: (callback) => on('media:state', callback),
     onThumb: (callback) => on('media:thumb', callback),
+  },
+
+  volume: {
+    set: (change) => ipcRenderer.send('volume:set', change),
+    mute: (muted) => ipcRenderer.send('volume:mute', muted),
+    onChange: (callback) => on('volume:changed', callback),
   },
 
   clipboard: {
@@ -50,6 +66,30 @@ contextBridge.exposeInMainWorld('cstorka', {
     pick: (kind) => ipcRenderer.invoke('bm:pick', kind),
     pathForFile: (file) => webUtils.getPathForFile(file),
     onChange: (callback) => on('bm:changed', callback),
+  },
+
+  calendar: {
+    range: (from, to) => ipcRenderer.invoke('cal:range', from, to),
+    add: (event) => ipcRenderer.invoke('cal:add', event),
+    remove: (id) => ipcRenderer.send('cal:remove', id),
+    onChange: (callback) => on('cal:changed', callback),
+    onReminder: (callback) => on('cal:reminder', callback),
+  },
+
+  notes: {
+    save: (note) => ipcRenderer.send('notes:save', note),
+    remove: (id) => ipcRenderer.send('notes:remove', id),
+  },
+
+  system: {
+    watch: (enabled) => ipcRenderer.send('system:watch', Boolean(enabled)),
+    onSample: (callback) => on('system:sample', callback),
+  },
+
+  updates: {
+    check: () => ipcRenderer.invoke('update:check'),
+    install: () => ipcRenderer.send('update:install'),
+    onStatus: (callback) => on('update:status', callback),
   },
 
   settings: {
