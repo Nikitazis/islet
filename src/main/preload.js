@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('cstorka', {
     onToggle: (callback) => on('island:toggle', callback),
     onCollapse: (callback) => on('island:collapse', callback),
     onQuickPaste: (callback) => on('island:quick-paste', callback),
+    onEar: (callback) => on('island:ear', callback),
     onBlur: (callback) => on('island:blur', callback),
     onShortcuts: (callback) => on('shortcuts:status', callback),
   },

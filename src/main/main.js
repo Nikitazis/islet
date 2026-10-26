@@ -12,10 +12,12 @@ const IS_DEV = process.argv.includes('--dev');
 // The first free one wins: Ctrl+Alt+Space is often taken (e.g. by the Claude app).
 const OPEN_SHORTCUTS = ['Control+Alt+Space', 'Alt+Shift+Space', 'Control+Alt+C'];
 const PASTE_SHORTCUT = 'Control+Shift+V';
-const FULLSCREEN_POLL_MS = 700;
+const WATCH_MS = 500;
 // The window is a fixed transparent canvas; the island inside it changes shape.
 // It is click-through everywhere except the island itself.
-const WINDOW_SIZE = { width: 760, height: 420 };
+const WINDOW_SIZE = { width: 760, height: 460 };
+// A point under the collapsed pill (DIP from the screen's top centre), where a browser's tabs would be.
+const PILL_PROBE_Y = 26;
 
 const OPEN_MODES = [
   { id: 'hover', label: 'При наведении' },
@@ -29,6 +31,7 @@ const DEFAULT_SETTINGS = {
   openOn: 'dwell',
   notifications: true,
   hideInFullscreen: true,
+  yieldToWindows: true,
   quickPaste: true,
   launchAtLogin: false,
   clipboardLimit: 60,
@@ -39,6 +42,7 @@ const SETTINGS_RULES = {
   openOn: (v) => OPEN_MODES.some((m) => m.id === v),
   notifications: (v) => typeof v === 'boolean',
   hideInFullscreen: (v) => typeof v === 'boolean',
+  yieldToWindows: (v) => typeof v === 'boolean',
   quickPaste: (v) => typeof v === 'boolean',
   launchAtLogin: (v) => typeof v === 'boolean',
   clipboardLimit: (v) => [30, 60, 100].includes(v),
@@ -54,6 +58,7 @@ let bookmarks;
 let quitting = false;
 
 let shownOverFullscreen = false; // opened by a shortcut while a fullscreen app is in front
+let windowBeneath = false;       // a program window reaches up under the pill: show the "ear"
 let pasteTarget = 0;             // window that had focus when quick paste was called
 let shortcuts = { open: null, paste: false }; // registered open accelerator, paste registered?
 
@@ -163,7 +168,6 @@ function bringIslandForward() {
 
 /** Hides the island while a fullscreen game, video or presentation is in front. */
 function syncFullscreen() {
-  if (!win || win.isDestroyed()) return;
   let hide = false;
   if (store.get('settings').hideInFullscreen && !shownOverFullscreen) {
     try {
@@ -177,6 +181,37 @@ function syncFullscreen() {
     win.hide();
   } else if (!hide && !win.isVisible()) {
     win.showInactive();
+  }
+}
+
+/**
+ * Checks where a click under the pill would land. If it's a program window
+ * (a browser's tabs, an editor's title bar), the island shrinks to the "ear".
+ */
+function syncWindowBeneath() {
+  let beneath = false;
+  if (store.get('settings').yieldToWindows) {
+    const { bounds } = screen.getPrimaryDisplay();
+    const point = screen.dipToScreenPoint({ x: bounds.x + bounds.width / 2, y: bounds.y + PILL_PROBE_Y });
+    const hwnd = win32.windowAt(point.x, point.y);
+    // The island itself answers only while it is being used: keep the current look.
+    if (hwnd === winHandle) return;
+    beneath = win32.isAppWindow(hwnd);
+  }
+  if (beneath !== windowBeneath) {
+    windowBeneath = beneath;
+    send('island:ear', beneath);
+  }
+}
+
+function watchWindows() {
+  if (!win || win.isDestroyed()) return;
+  syncFullscreen();
+  if (!win.isVisible()) return;
+  try {
+    syncWindowBeneath();
+  } catch (err) {
+    console.warn('[ear]', err.message);
   }
 }
 
@@ -238,7 +273,7 @@ function updateSettings(patch) {
   if (next.launchAtLogin !== current.launchAtLogin) setLaunchAtLogin(next.launchAtLogin);
   if (next.clipboardLimit !== current.clipboardLimit) clips.applyLimit();
   if (next.quickPaste !== current.quickPaste) registerShortcuts();
-  if (next.hideInFullscreen !== current.hideInFullscreen) syncFullscreen();
+  if (next.hideInFullscreen !== current.hideInFullscreen || next.yieldToWindows !== current.yieldToWindows) watchWindows();
   send('settings:changed', next);
   buildTrayMenu();
   return next;
@@ -273,6 +308,12 @@ function buildTrayMenu() {
       click: (item) => updateSettings({ hideInFullscreen: item.checked }),
     },
     {
+      label: 'Уступать место окнам',
+      type: 'checkbox',
+      checked: settings.yieldToWindows,
+      click: (item) => updateSettings({ yieldToWindows: item.checked }),
+    },
+    {
       label: 'Быстрая вставка (Ctrl+Shift+V)',
       type: 'checkbox',
       checked: settings.quickPaste,
@@ -305,6 +346,7 @@ function registerIpc() {
     bookmarks: bookmarks.items,
     media: media.state,
     shortcuts: { paste: PASTE_SHORTCUT, status: shortcuts },
+    ear: windowBeneath,
     version: app.getVersion(),
   }));
 
@@ -323,7 +365,7 @@ function registerIpc() {
     pasteTarget = 0;
     if (shownOverFullscreen) {
       shownOverFullscreen = false;
-      syncFullscreen();
+      watchWindows();
     }
   });
 
@@ -402,7 +444,7 @@ function bootstrap() {
 
     media.start();
     clips.start().catch((err) => console.warn('[clipboard] could not start:', err.message));
-    setInterval(syncFullscreen, FULLSCREEN_POLL_MS);
+    setInterval(watchWindows, WATCH_MS);
 
     screen.on('display-metrics-changed', repositionWindow);
     screen.on('display-added', repositionWindow);

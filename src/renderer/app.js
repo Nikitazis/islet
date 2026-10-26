@@ -13,8 +13,11 @@ const api = window.cstorka;
 const SIZES = {
   idle: { w: 216, h: 36, r: 18 },
   playing: { w: 300, h: 36, r: 18 },
+  // A program window is under the pill: just a slim handle at the screen edge.
+  ear: { w: 104, h: 6, r: 3 },
   peek: { w: 420, h: 64, r: 32 },
   expanded: { w: 680, h: 330, r: 40 },
+  settings: { w: 680, h: 384, r: 40 },
 };
 const DEPTH = { compact: 0, peek: 1, expanded: 2 };
 const TABS = [
@@ -28,6 +31,8 @@ const HOVER_DELAY = { hover: 120, dwell: 450 };
 // "Edge" mode: the pointer pushed against the top screen edge above the pill.
 const EDGE_ROWS = 2;
 const EDGE_DWELL = 110;
+// Over a browser people throw the pointer up to click tabs, so the ear wants a longer push.
+const EAR_DWELL = 400;
 const LEAVE_DELAY = 380;
 const PEEK_TIME = 2800;
 
@@ -47,6 +52,7 @@ const ui = {
   pinned: false,
   hovering: false,
   playing: false,
+  ear: false,
 };
 let settings = {};
 let hoverTimer = null;
@@ -74,20 +80,31 @@ function setupMotion() {
 
 // ───────────── Island state ─────────────
 
+function sizeFor(state) {
+  if (state === 'compact') return ui.ear ? SIZES.ear : SIZES[ui.playing ? 'playing' : 'idle'];
+  if (state === 'expanded' && ui.settingsOpen) return SIZES.settings;
+  return SIZES[state];
+}
+
 function applySize() {
-  const compact = SIZES[ui.playing ? 'playing' : 'idle'];
-  const size = ui.state === 'compact' ? compact : SIZES[ui.state];
+  const size = sizeFor(ui.state);
   island.style.setProperty('--w', `${size.w}px`);
   island.style.setProperty('--h', `${size.h}px`);
   island.style.setProperty('--r', `${size.r}px`);
-  island.style.setProperty('--cw', `${compact.w}px`);
+  island.style.setProperty('--cw', `${SIZES[ui.playing ? 'playing' : 'idle'].w}px`);
+  island.style.setProperty('--eh', `${(ui.settingsOpen ? SIZES.settings : SIZES.expanded).h}px`);
+  island.classList.toggle('is-ear', ui.ear);
+}
+
+/** Growing shapes overshoot a little, shrinking ones settle firmly. */
+function setEase(growing) {
+  island.style.setProperty('--ease', growing ? 'var(--open-ease)' : 'var(--close-ease)');
+  island.style.setProperty('--dur', growing ? 'var(--open-dur)' : 'var(--close-dur)');
 }
 
 function setState(next) {
   if (next !== ui.state) {
-    const growing = DEPTH[next] > DEPTH[ui.state];
-    island.style.setProperty('--ease', growing ? 'var(--open-ease)' : 'var(--close-ease)');
-    island.style.setProperty('--dur', growing ? 'var(--open-dur)' : 'var(--close-dur)');
+    setEase(DEPTH[next] > DEPTH[ui.state]);
     ui.state = next;
     island.dataset.state = next;
     api.island.reportState(next);
@@ -127,8 +144,11 @@ function pinOpen() {
 
 island.addEventListener('pointerenter', (event) => {
   ui.hovering = true;
-  api.island.setInteractive(true);
   clearTimeout(leaveTimer);
+  // Over a program window the ear and the notifications stay click-through:
+  // clicks go to the tabs underneath, and only the edge push opens the island.
+  if (ui.ear && ui.state !== 'expanded') return;
+  api.island.setInteractive(true);
   const delay = HOVER_DELAY[settings.openOn];
   // A held button means a tab or a selection is being dragged past: don't pop open.
   if (ui.state !== 'expanded' && delay !== undefined && event.buttons === 0) {
@@ -136,13 +156,14 @@ island.addEventListener('pointerenter', (event) => {
   }
 });
 
-// "Edge" mode watches the very top rows of the screen. The window forwards
-// pointer moves even where it is click-through, so this sees them.
+// "Edge" mode and the ear watch the very top rows of the screen. The window
+// forwards pointer moves even where it is click-through, so this sees them.
 document.addEventListener('mousemove', (event) => {
-  if (settings.openOn !== 'edge' || ui.state === 'expanded') return;
+  if ((!ui.ear && settings.openOn !== 'edge') || ui.state === 'expanded') return;
   const pill = island.getBoundingClientRect();
+  const margin = ui.ear ? 16 : 8;
   const atEdge = event.clientY < EDGE_ROWS && event.buttons === 0
-    && event.clientX >= pill.left - 8 && event.clientX <= pill.right + 8;
+    && event.clientX >= pill.left - margin && event.clientX <= pill.right + margin;
   if (!atEdge) {
     clearTimeout(edgeTimer);
     edgeTimer = null;
@@ -152,7 +173,7 @@ document.addEventListener('mousemove', (event) => {
       expand();
       // The pointer is above the island, not on it: close unless it comes down.
       leaveTimer = setTimeout(() => { if (!ui.hovering && !ui.pinned) collapse(); }, 1200);
-    }, EDGE_DWELL);
+    }, ui.ear ? EAR_DWELL : EDGE_DWELL);
   }
 });
 
@@ -215,15 +236,21 @@ const tabButtons = TABS.map((tab) => h('button', {
 tabsEl.append(...tabButtons);
 
 settingsBtn.append(iconEl('sliders'));
-settingsBtn.addEventListener('click', () => {
-  ui.settingsOpen = !ui.settingsOpen;
+settingsBtn.addEventListener('click', () => setSettingsOpen(!ui.settingsOpen));
+
+/** Settings need a taller island; the shape springs to the new height. */
+function setSettingsOpen(open) {
+  if (open === ui.settingsOpen) return;
+  ui.settingsOpen = open;
+  setEase(open);
+  applySize();
   renderTabs();
-});
+}
 
 function selectTab(id) {
   ui.tab = id;
-  ui.settingsOpen = false;
-  renderTabs();
+  if (ui.settingsOpen) setSettingsOpen(false);
+  else renderTabs();
 }
 
 function renderTabs() {
@@ -389,6 +416,20 @@ api.island.onQuickPaste(() => {
 // The main process hides the island under fullscreen apps.
 api.island.onCollapse(collapse);
 
+// A program window under the pill (a browser's tabs): shrink to the ear, or grow back.
+function setEar(ear) {
+  if (ear === ui.ear) return;
+  ui.ear = ear;
+  if (ui.state !== 'expanded') {
+    setEase(!ear);
+    clearTimeout(hoverTimer);
+    // The ear never takes clicks, even if the pointer happened to rest on the pill.
+    if (ear) api.island.setInteractive(false);
+  }
+  applySize();
+}
+api.island.onEar(setEar);
+
 // A click anywhere outside the island takes focus away: close, or at least stop holding focus.
 api.island.onBlur(() => {
   if (ui.state === 'expanded' && !ui.hovering) {
@@ -399,18 +440,20 @@ api.island.onBlur(() => {
   }
 });
 
+ui.ear = Boolean(data.ear);
 tick();
 applySize();
 renderTabs();
 
-// Demo page: ?state=expanded&tab=clipboard, ?state=peek, ?settings=1, ?accent=orange
+// Demo page: ?state=expanded&tab=clipboard, ?state=peek, ?settings=1, ?accent=orange, ?ear=1
 if (api.demo) {
   const params = new URLSearchParams(location.search);
   if (params.get('accent')) applySettings({ ...settings, accent: params.get('accent') });
   if (params.get('tab')) ui.tab = params.get('tab');
+  if (params.get('ear')) setEar(true);
   if (params.get('state') === 'expanded') expand();
-  if (params.get('settings')) { expand(); ui.settingsOpen = true; renderTabs(); }
+  if (params.get('settings')) { expand(); setSettingsOpen(true); }
   if (params.get('state') === 'peek') api.demoPeek?.();
   if (params.get('state') === 'paste') api.demoQuickPaste?.();
-  window.cstorkaUi = { expand, collapse, peek, selectTab };
+  window.cstorkaUi = { expand, collapse, peek, selectTab, setEar };
 }

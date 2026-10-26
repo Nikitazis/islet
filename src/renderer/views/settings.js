@@ -84,11 +84,12 @@ export function createSettingsView(root, api, { shortcuts, version, onChange }) 
     row('Акцентный цвет', null, h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Акцентный цвет' }, swatches)),
     row('Уведомления', hintEl('Скопированное и новый трек'), toggle('notifications', 'Уведомления')),
     row('Прятать в полноэкранном', hintEl('Игры, видео, презентации'), toggle('hideInFullscreen', 'Прятать в полноэкранном режиме')),
-    row('Запуск с Windows', hintEl('Шторка появится после входа'), toggle('launchAtLogin', 'Запуск с Windows')),
+    row('Уступать место окнам', hintEl('Над браузером — тонкая полоска'), toggle('yieldToWindows', 'Уступать место окнам')),
     row('История буфера', hintEl('Закреплённые не считаются'),
       h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Сколько записей хранить' },
         LIMITS.map((n) => radio('clipboardLimit', n, {}, String(n))))),
     row('Быстрая вставка', pasteHint, toggle('quickPaste', 'Быстрая вставка')),
+    row('Запуск с Windows', hintEl('Шторка появится после входа'), toggle('launchAtLogin', 'Запуск с Windows')),
     h('div', { class: 'settings-foot' }, openKeys, h('span', {}, `Cstorka ${version}`)),
   ));
 

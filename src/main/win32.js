@@ -8,6 +8,7 @@ const koffi = require('koffi');
 const user32 = koffi.load('user32.dll');
 
 const RECT = koffi.struct('RECT', { left: 'long', top: 'long', right: 'long', bottom: 'long' });
+const POINT = koffi.struct('POINT', { x: 'long', y: 'long' });
 const MONITORINFO = koffi.struct('MONITORINFO', {
   cbSize: 'uint32_t',
   rcMonitor: RECT,
@@ -26,13 +27,17 @@ const SetWindowLongPtrW = user32.func('intptr_t __stdcall SetWindowLongPtrW(uint
 const MonitorFromWindow = user32.func('uintptr_t __stdcall MonitorFromWindow(uintptr_t hWnd, uint32_t flags)');
 const GetMonitorInfoW = user32.func('bool __stdcall GetMonitorInfoW(uintptr_t monitor, _Inout_ MONITORINFO *info)');
 const keybd_event = user32.func('void __stdcall keybd_event(uint8_t vk, uint8_t scan, uint32_t flags, uintptr_t extra)');
+const WindowFromPoint = user32.func('uintptr_t __stdcall WindowFromPoint(POINT point)');
+const GetAncestor = user32.func('uintptr_t __stdcall GetAncestor(uintptr_t hWnd, uint32_t flags)');
 
 const MONITOR_DEFAULTTONEAREST = 2;
+const GA_ROOT = 2;
 const GWL_STYLE = -16;
 const GWL_EXSTYLE = -20;
 const WS_CAPTION = 0x00c00000;
 const WS_THICKFRAME = 0x00040000;
 const WS_EX_NOACTIVATE = 0x08000000;
+const WS_EX_TOOLWINDOW = 0x00000080;
 const KEYEVENTF_KEYUP = 0x2;
 const VK_CONTROL = 0x11;
 const VK_V = 0x56;
@@ -83,6 +88,24 @@ function isForegroundFullscreen(islandHwnd) {
 }
 
 /**
+ * The top-level window a click at this screen point (physical pixels) would reach.
+ * Windows itself skips click-through windows, the island included.
+ */
+function windowAt(x, y) {
+  const hwnd = toHandle(WindowFromPoint({ x: Math.round(x), y: Math.round(y) }));
+  return hwnd ? toHandle(GetAncestor(hwnd, GA_ROOT)) : 0;
+}
+
+/**
+ * A real program window, not the desktop, the taskbar, or a desktop widget
+ * (Rainmeter skins and the like are tool windows, browsers never are).
+ */
+function isAppWindow(hwnd) {
+  if (!hwnd || SHELL_CLASSES.has(className(hwnd))) return false;
+  return !(Number(GetWindowLongPtrW(hwnd, GWL_EXSTYLE)) & WS_EX_TOOLWINDOW);
+}
+
+/**
  * Whether clicks activate the window. Electron's setFocusable(false) also
  * deactivates the window, which hands focus to some other window; flipping
  * the style bit directly has no such side effect.
@@ -106,4 +129,14 @@ function sendPaste() {
   keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0);
 }
 
-module.exports = { handleOf, foregroundWindow, isForegroundFullscreen, setNoActivate, focusWindow, sendPaste, className };
+module.exports = {
+  handleOf,
+  foregroundWindow,
+  isForegroundFullscreen,
+  windowAt,
+  isAppWindow,
+  setNoActivate,
+  focusWindow,
+  sendPaste,
+  className,
+};

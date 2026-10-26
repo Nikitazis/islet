@@ -117,7 +117,7 @@ const state = {
   ],
   settings: {
     accent: 'violet', openOn: 'dwell', notifications: true, hideInFullscreen: true,
-    quickPaste: true, launchAtLogin: false, clipboardLimit: 60,
+    yieldToWindows: true, quickPaste: true, launchAtLogin: false, clipboardLimit: 60,
   },
 };
 
@@ -147,6 +147,7 @@ window.cstorka = {
     onToggle: (cb) => on('toggle', cb),
     onCollapse: (cb) => on('collapse', cb),
     onQuickPaste: (cb) => on('quick-paste', cb),
+    onEar: (cb) => on('ear', cb),
     onBlur: (cb) => on('blur', cb),
     onShortcuts: (cb) => on('shortcuts', cb),
   },
@@ -246,4 +247,5 @@ window.cstorkaDemo = {
   next: () => window.cstorka.media.command({ cmd: 'next', app: 'Spotify.exe' }),
   toggle: () => emit('toggle', {}),
   quickPaste: () => emit('quick-paste'),
+  ear: (on = true) => emit('ear', on),
 };
