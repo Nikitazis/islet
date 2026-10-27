@@ -2,12 +2,12 @@
 
 <img src="assets/icon.png" width="96" alt="">
 
-# Cstorka
+# Islet
 
 **A Dynamic Island–style top bar for Windows.**
 A small black pill with the time at the top of your screen that opens into a panel with media controls, clipboard history, bookmarks, a timer, your calendar, system stats and notes.
 
-[Русский](README.md) · [Download](https://github.com/Nikitazis/cstorka/releases/latest)
+[Русский](README.md) · [Download](https://github.com/Nikitazis/islet/releases/latest)
 
 </div>
 
@@ -29,7 +29,7 @@ The interface follows the Windows language (Russian or English) and can be switc
 
 ## Install
 
-Download `Cstorka-Setup-….exe` or the portable build from [Releases](https://github.com/Nikitazis/cstorka/releases/latest). The installed version updates itself.
+Download `Islet-Setup-….exe` or the portable build from [Releases](https://github.com/Nikitazis/islet/releases/latest). The installed version updates itself.
 
 The build isn't code-signed yet, so on first launch Windows shows "Windows protected your PC". Click "More info", then "Run anyway".
 
@@ -38,8 +38,8 @@ Requires Windows 10 1809 or later.
 ## Develop
 
 ```bash
-git clone https://github.com/Nikitazis/cstorka.git
-cd cstorka
+git clone https://github.com/Nikitazis/islet.git
+cd islet
 npm install
 npm start
 ```

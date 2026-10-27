@@ -169,7 +169,7 @@ function createWindow() {
     skipTaskbar: true,
     alwaysOnTop: true,
     show: false,
-    title: 'Cstorka',
+    title: 'Islet',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -414,7 +414,7 @@ function buildTrayMenu() {
 
 function createTray() {
   tray = new Tray(trayImage());
-  tray.setToolTip('Cstorka');
+  tray.setToolTip('Islet');
   tray.on('click', openFromShortcut);
   buildTrayMenu();
 }
@@ -541,11 +541,11 @@ function registerIpc() {
 // ───────────── App ─────────────
 
 function bootstrap() {
-  app.setAppUserModelId('com.cstorka.app');
+  app.setAppUserModelId('com.islet.app');
 
   app.whenReady().then(() => {
     const dataDir = app.getPath('userData');
-    store = new Store(path.join(dataDir, 'cstorka.json'), {
+    store = new Store(path.join(dataDir, 'islet.json'), {
       settings: DEFAULT_SETTINGS,
       meta: { onboarded: false },
       clipboard: [],
@@ -554,6 +554,8 @@ function bootstrap() {
       notes: [],
     });
     migrateSettings();
+    // Re-registered on every start so the entry follows the app if it moves or is renamed.
+    if (store.get('settings').launchAtLogin) setLaunchAtLogin(true);
     language = i18n.setLanguage(store.get('settings').language);
 
     bridge = new WinBridge(path.join(__dirname, 'win-bridge.ps1'));

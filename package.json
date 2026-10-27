@@ -1,16 +1,16 @@
 {
-  "name": "cstorka",
-  "productName": "Cstorka",
+  "name": "islet",
+  "productName": "Islet",
   "version": "0.3.0",
   "description": "Шторка в стиле Dynamic Island для Windows: медиа, буфер обмена, закладки, таймер, календарь, система и заметки.",
   "main": "src/main/main.js",
   "author": "nikitazis688",
   "license": "MIT",
   "private": true,
-  "homepage": "https://github.com/Nikitazis/cstorka",
+  "homepage": "https://github.com/Nikitazis/islet",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Nikitazis/cstorka.git"
+    "url": "https://github.com/Nikitazis/islet.git"
   },
   "keywords": [
     "dynamic-island",
@@ -36,8 +36,8 @@
     "release": "electron-builder --win --publish always"
   },
   "build": {
-    "appId": "com.cstorka.app",
-    "productName": "Cstorka",
+    "appId": "com.islet.app",
+    "productName": "Islet",
     "directories": {
       "output": "dist"
     },
@@ -51,7 +51,7 @@
       {
         "provider": "github",
         "owner": "Nikitazis",
-        "repo": "cstorka",
+        "repo": "islet",
         "releaseType": "release"
       }
     ],
@@ -75,7 +75,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "Cstorka",
+      "shortcutName": "Islet",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
     "portable": {

@@ -8,7 +8,7 @@ const on = (channel, callback) => {
   return () => ipcRenderer.removeListener(channel, handler);
 };
 
-contextBridge.exposeInMainWorld('cstorka', {
+contextBridge.exposeInMainWorld('islet', {
   init: () => ipcRenderer.invoke('app:init'),
   onboarded: () => ipcRenderer.send('app:onboarded'),
   ready: () => ipcRenderer.send('app:ready'),

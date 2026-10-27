@@ -14,8 +14,8 @@ import { createNotesView } from './views/notes.js';
 import { createSettingsView, prettyShortcut } from './views/settings.js';
 
 // Opened in a plain browser (no Electron preload): run on demo data.
-if (!window.cstorka) await import('./dev/mock.js');
-const api = window.cstorka;
+if (!window.islet) await import('./dev/mock.js');
+const api = window.islet;
 
 const SIZES = {
   // A program window is under the pill: just a slim handle at the screen edge.
@@ -658,5 +658,5 @@ if (api.demo) {
   if (params.get('state') === 'peek') api.demoPeek?.();
   if (params.get('state') === 'paste') api.demoQuickPaste?.();
   if (params.get('timer')) timer.start(Number(params.get('timer')) * 60_000);
-  window.cstorkaUi = { expand, collapse, peek, selectTab, setEar, timer };
+  window.isletUi = { expand, collapse, peek, selectTab, setEar, timer };
 }

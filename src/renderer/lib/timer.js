@@ -1,7 +1,7 @@
 // Countdown timer and Pomodoro. Keeps working across restarts: the end time
 // is stored, not the remaining seconds.
 
-const STORAGE_KEY = 'cstorka.timer';
+const STORAGE_KEY = 'islet.timer';
 export const POMODORO = { focus: 25, short: 5, long: 15, rounds: 4 };
 const DEFAULT_MS = 5 * 60_000;
 const MINUTE = 60_000;

@@ -1,7 +1,7 @@
 import { h, iconEl } from '../lib/dom.js';
 import { t } from '../lib/i18n.js';
 
-const DRAG_TYPE = 'application/x-cstorka-bookmark';
+const DRAG_TYPE = 'application/x-islet-bookmark';
 
 export function createBookmarksView(root, api, hooks) {
   let items = [];

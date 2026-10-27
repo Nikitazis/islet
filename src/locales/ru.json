@@ -37,7 +37,7 @@
   "peek.reminderNow": "Начинается сейчас",
   "peek.updateReady": "Обновление {version} готово",
   "peek.updateReadySub": "Перезапустите шторку в настройках",
-  "onboarding.title": "Cstorka запущена",
+  "onboarding.title": "Islet работает",
   "onboarding.open": "Наведите мышь на шторку или нажмите {shortcut}",
   "onboarding.openNoKey": "Наведите мышь на шторку, чтобы открыть её",
   "onboarding.paste": "{shortcut} — вставка из истории",
@@ -200,7 +200,7 @@
   "set.update.restart": "Перезапустить",
   "set.update.error": "Не удалось проверить",
   "set.update.unsupported": "Обновляется через установщик с GitHub",
-  "set.version": "Cstorka {version}",
+  "set.version": "Islet {version}",
 
   "tray.open": "Открыть шторку",
   "tray.openOn": "Как раскрывать",

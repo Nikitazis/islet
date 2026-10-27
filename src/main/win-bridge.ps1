@@ -1,4 +1,4 @@
-# Cstorka Windows bridge.
+# Islet Windows bridge.
 # Reads what PowerShell reaches easily and Node doesn't, and streams JSON lines to stdout:
 #   {"type":"state", ...}   - media sessions (Global System Media Transport Controls,
 #                             the source of the Windows volume flyout) when they change
@@ -47,7 +47,7 @@ using System;
 using System.Runtime.InteropServices;
 
 [Guid("5CDF2C82-841E-4546-9722-0CF74078229A"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface ICstorkaEndpointVolume {
+interface IIsletEndpointVolume {
     int f(); int g(); int h(); int i();
     int SetMasterVolumeLevelScalar(float level, Guid context);
     int j();
@@ -58,31 +58,31 @@ interface ICstorkaEndpointVolume {
 }
 
 [Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface ICstorkaDevice {
-    int Activate(ref Guid id, int clsCtx, int activationParams, out ICstorkaEndpointVolume volume);
+interface IIsletDevice {
+    int Activate(ref Guid id, int clsCtx, int activationParams, out IIsletEndpointVolume volume);
 }
 
 [Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface ICstorkaDeviceEnumerator {
+interface IIsletDeviceEnumerator {
     int f();
-    int GetDefaultAudioEndpoint(int dataFlow, int role, out ICstorkaDevice device);
+    int GetDefaultAudioEndpoint(int dataFlow, int role, out IIsletDevice device);
 }
 
 [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-class CstorkaDeviceEnumerator { }
+class IsletDeviceEnumerator { }
 
-public static class CstorkaAudio {
-    static ICstorkaEndpointVolume endpoint;
+public static class IsletAudio {
+    static IIsletEndpointVolume endpoint;
     static DateTime acquired;
 
     // Re-acquired every few seconds so a new default device (headphones) is picked up.
-    static ICstorkaEndpointVolume Endpoint() {
+    static IIsletEndpointVolume Endpoint() {
         if (endpoint == null || (DateTime.UtcNow - acquired).TotalSeconds > 5) {
-            var enumerator = new CstorkaDeviceEnumerator() as ICstorkaDeviceEnumerator;
-            ICstorkaDevice device;
+            var enumerator = new IsletDeviceEnumerator() as IIsletDeviceEnumerator;
+            IIsletDevice device;
             Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(0, 1, out device));
-            Guid id = typeof(ICstorkaEndpointVolume).GUID;
-            ICstorkaEndpointVolume volume;
+            Guid id = typeof(IIsletEndpointVolume).GUID;
+            IIsletEndpointVolume volume;
             Marshal.ThrowExceptionForHR(device.Activate(ref id, 23, 0, out volume));
             endpoint = volume;
             acquired = DateTime.UtcNow;
@@ -110,8 +110,8 @@ $lastVolume = ''
 
 function Emit-Volume {
     if (-not $audioSupported) { return }
-    $level = [math]::Round([CstorkaAudio]::Level, 3)
-    $muted = [CstorkaAudio]::Muted
+    $level = [math]::Round([IsletAudio]::Level, 3)
+    $muted = [IsletAudio]::Muted
     $key = "$level|$muted"
     if ($key -ne $script:lastVolume) {
         $script:lastVolume = $key
@@ -287,16 +287,16 @@ function Invoke-BridgeCommand([string]$line) {
         'volume' {
             if (-not $audioSupported) { $ok = $false; break }
             if ($null -ne $command.delta) {
-                [CstorkaAudio]::Level = [CstorkaAudio]::Level + [double]$command.delta
-                if ([double]$command.delta -gt 0) { [CstorkaAudio]::Muted = $false }
+                [IsletAudio]::Level = [IsletAudio]::Level + [double]$command.delta
+                if ([double]$command.delta -gt 0) { [IsletAudio]::Muted = $false }
             } else {
-                [CstorkaAudio]::Level = [double]$command.value
+                [IsletAudio]::Level = [double]$command.value
             }
         }
         'mute' {
             if (-not $audioSupported) { $ok = $false; break }
-            $muted = if ($null -eq $command.muted) { -not [CstorkaAudio]::Muted } else { [bool]$command.muted }
-            [CstorkaAudio]::Muted = $muted
+            $muted = if ($null -eq $command.muted) { -not [IsletAudio]::Muted } else { [bool]$command.muted }
+            [IsletAudio]::Muted = $muted
         }
         'copyFiles' {
             # SetFileDropList needs an STA thread, which powershell.exe uses by default.

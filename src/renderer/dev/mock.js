@@ -101,7 +101,7 @@ const state = {
     ],
   },
   clipboard: [
-    { id: id(), type: 'text', kind: 'link', text: 'https://github.com/username/cstorka', length: 35, createdAt: now - 40_000, pinned: false },
+    { id: id(), type: 'text', kind: 'link', text: 'https://github.com/username/islet', length: 35, createdAt: now - 40_000, pinned: false },
     { id: id(), type: 'text', kind: 'text', text: 'Созвон перенесли на четверг, 15:30. Ссылку пришлю в чат за полчаса.', length: 68, createdAt: now - 6 * 60_000, pinned: false },
     { id: id(), type: 'image', thumb: covers.shot, width: 1920, height: 1200, createdAt: now - 25 * 60_000, pinned: false },
     { id: id(), type: 'files', names: ['Отчёт за октябрь.pdf', 'Графики.xlsx'], icon: null, createdAt: now - 2 * 3_600_000, pinned: false },
@@ -156,7 +156,7 @@ function addClip(text) {
 
 const params = new URLSearchParams(location.search);
 
-window.cstorka = {
+window.islet = {
   demo: true,
   init: async () => ({
     ...clone(state),
@@ -283,7 +283,7 @@ window.cstorka = {
       return true;
     },
     async paste(clipId) {
-      const ok = await window.cstorka.clipboard.copy(clipId);
+      const ok = await window.islet.clipboard.copy(clipId);
       console.log('[demo] paste', clipId);
       return { ok, pasted: ok };
     },
@@ -350,10 +350,10 @@ window.cstorka = {
   demoQuickPaste: () => emit('quick-paste'),
 };
 
-// Handy in the console: cstorkaDemo.copy('текст'), cstorkaDemo.next()
-window.cstorkaDemo = {
+// Handy in the console: isletDemo.copy('текст'), isletDemo.next()
+window.isletDemo = {
   copy: addClip,
-  next: () => window.cstorka.media.command({ cmd: 'next', app: 'Spotify.exe' }),
+  next: () => window.islet.media.command({ cmd: 'next', app: 'Spotify.exe' }),
   toggle: () => emit('toggle', {}),
   quickPaste: () => emit('quick-paste'),
   ear: (on = true) => emit('ear', on),
